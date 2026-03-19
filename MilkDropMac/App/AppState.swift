@@ -91,7 +91,7 @@ class AppState: ObservableObject {
         audioEngine.$audioData
             .sink { [weak self] data in
                 self?.beatDetector.process(data)
-                self?.audioLevel = data.rms
+                self?.audioLevel = Double(data.rms)
                 self?.beatStrength = data.bassLevel
             }
             .store(in: &cancellables)
@@ -150,7 +150,7 @@ class AppState: ObservableObject {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = preset.name
         panel.allowedContentTypes = [.milk]
-        panel.begin { [weak self] response in
+        panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             try? preset.data.write(to: url, atomically: true, encoding: .utf8)
         }

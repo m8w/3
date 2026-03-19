@@ -331,12 +331,13 @@ struct EditorCodeView: View {
     }
 
     var body: some View {
-        TextEditor(text: binding.onChange { _ in onChange() })
+        TextEditor(text: binding)
             .font(.system(size: 13, design: .monospaced))
             .scrollContentBackground(.hidden)
             .background(Color(hex: "0c0c0c"))
             .foregroundColor(Color(hex: "e0e0e0"))
             .padding(12)
+            .onChange(of: binding.wrappedValue) { _ in onChange() }
             .overlay(
                 // Placeholder
                 Group {
