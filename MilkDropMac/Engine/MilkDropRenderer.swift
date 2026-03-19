@@ -294,13 +294,21 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             finalTexture = outTex
         }
 
-        // 6. Blit to drawable
+        // 6. Blit to drawable — guard against size mismatch (window resize race)
+        let drawTex = drawable.texture
+        if finalTexture.width != drawTex.width || finalTexture.height != drawTex.height {
+            setupTextures(size: CGSize(width: drawTex.width, height: drawTex.height))
+            uniforms.resolution = SIMD2<Float>(Float(drawTex.width), Float(drawTex.height))
+            uniforms.aspect = Float(drawTex.width) / Float(max(drawTex.height, 1))
+            cmdBuf.commit()
+            return
+        }
         if let blit = cmdBuf.makeBlitCommandEncoder() {
             blit.copy(from: finalTexture,
                       sourceSlice: 0, sourceLevel: 0,
                       sourceOrigin: .init(x: 0, y: 0, z: 0),
                       sourceSize: .init(width: finalTexture.width, height: finalTexture.height, depth: 1),
-                      to: drawable.texture,
+                      to: drawTex,
                       destinationSlice: 0, destinationLevel: 0,
                       destinationOrigin: .init(x: 0, y: 0, z: 0))
             blit.endEncoding()

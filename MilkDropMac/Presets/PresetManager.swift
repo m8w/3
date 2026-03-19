@@ -93,9 +93,9 @@ class PresetManager: ObservableObject {
             var result: [MilkDropPreset] = []
             for case let url as URL in enumerator.allObjects {
                 guard ["milk", "milk2"].contains(url.pathExtension.lowercased()) else { continue }
-                guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
                 let name = url.deletingPathExtension().lastPathComponent
-                var preset = MilkDropPreset(name: name, url: url, data: text)
+                // data is intentionally empty — loaded lazily when preset is selected
+                var preset = MilkDropPreset(name: name, url: url, data: "")
                 preset.isDoublePreset = url.pathExtension.lowercased() == "milk2"
                 preset.dateModified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .now
                 result.append(preset)
@@ -147,7 +147,12 @@ class PresetManager: ObservableObject {
             if history.count > 50 { history.removeFirst() }
         }
         pendingTransition = transition
-        currentPreset = preset
+        // Lazy-load preset data from disk if not yet read
+        var loaded = preset
+        if loaded.data.isEmpty, let url = loaded.url {
+            loaded.data = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        }
+        currentPreset = loaded
     }
 
     // MARK: - Filtered / sorted presets
