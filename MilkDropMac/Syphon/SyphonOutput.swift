@@ -27,7 +27,7 @@ class SyphonOutput: ObservableObject {
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self, let b = self.bridge else { return }
-                self.clientCount = b.clientCount
+                self.clientCount = Int(b.clientCount)
                 self.isRunning   = b.isRunning
             }
     }
@@ -40,7 +40,7 @@ class SyphonOutput: ObservableObject {
     }
 
     func publish(texture: MTLTexture, commandBuffer: MTLCommandBuffer) {
-        bridge?.publish(texture: texture, commandBuffer: commandBuffer)
+        bridge?.publishTexture(texture, commandBuffer: commandBuffer)
     }
 
     func updateName(_ name: String) {
