@@ -1,0 +1,43 @@
+[preset_a]
+[preset00]
+fRating=4
+fGammaAdj=1.5
+fDecay=0.99
+fZoom=1.005
+fRot=0.001
+fWarpScale=0.5
+fWarpAnimSpeed=0.8
+fXCentre=0.5
+fYCentre=0.5
+per_frame_1=zoom = 1.005 + 0.01*bass;
+per_frame_2=rot = rot + 0.001 + 0.005*mid;
+wave_0_enabled=1
+wave_0_r=0.3
+wave_0_g=0.7
+wave_0_b=1.0
+wave_0_a=0.7
+wave_0_scaling=0.8
+wave_0_smoothing=0.7
+
+[preset_b]
+[preset00]
+fRating=4
+fGammaAdj=2.0
+fDecay=0.95
+fZoom=1.02
+fRot=-0.002
+fWarpScale=3.0
+fWarpAnimSpeed=2.0
+fXCentre=0.5
+fYCentre=0.5
+per_frame_1=zoom = 1.02 + 0.04*bass;
+per_frame_2=rot = rot - 0.002 - 0.01*treble;
+per_frame_3=warp = 3.0 + 2.0*bass;
+wave_0_enabled=1
+wave_0_r=1.0
+wave_0_g=0.4
+wave_0_b=0.8
+wave_0_a=0.9
+wave_0_scaling=1.5
+wave_0_smoothing=0.3
+wave_0_additive=1

@@ -1,0 +1,54 @@
+[preset00]
+fRating=4
+fGammaAdj=1.8
+fDecay=0.98
+fZoom=1.01
+fRot=0.0
+fWarpScale=1.0
+fWarpAnimSpeed=1.0
+fXCentre=0.5
+fYCentre=0.5
+szx=1.0
+szy=1.0
+fVideoEchoDecayAlpha=0.0
+fVideoEchoDecayZoom=1.0
+iVideoEchoDecayOrientation=0
+
+per_frame_1=zoom = 1.01 + 0.02*bass;
+per_frame_2=rot = rot + 0.002*sin(time*0.1);
+per_frame_3=warp = 1 + 0.5*bass;
+per_frame_4=cx = 0.5 + 0.1*sin(time*0.17);
+per_frame_5=cy = 0.5 + 0.1*cos(time*0.13);
+per_frame_6=decay = 0.98 - 0.01*treble;
+per_frame_7=r = 0.3 + 0.4*bass;
+per_frame_8=g = 0.1 + 0.3*mid;
+per_frame_9=b = 0.5 + 0.4*treble;
+
+wave_0_enabled=1
+wave_0_samples=512
+wave_0_scaling=1.0
+wave_0_smoothing=0.5
+wave_0_r=0.5
+wave_0_g=0.8
+wave_0_b=1.0
+wave_0_a=0.9
+wave_0_usedots=0
+wave_0_drawthick=1
+wave_0_additive=1
+wave_0_per_point_1=x = cos(i*3.14159*2)*0.4 + 0.5;
+wave_0_per_point_2=y = sin(i*3.14159*2)*0.4*sample*2 + 0.5;
+
+shape_0_enabled=1
+shape_0_sides=6
+shape_0_additive=1
+shape_0_x=0.5
+shape_0_y=0.5
+shape_0_radius=0.1
+shape_0_r=0.8
+shape_0_g=0.4
+shape_0_b=1.0
+shape_0_a=0.3
+shape_0_per_frame_1=radius = 0.05 + 0.08*bass;
+shape_0_per_frame_2=ang = ang + 0.02;
+shape_0_per_frame_3=r = 0.5 + 0.5*sin(time*0.7);
+shape_0_per_frame_4=g = 0.2 + 0.3*bass;
