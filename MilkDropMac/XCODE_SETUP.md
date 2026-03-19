@@ -9,7 +9,32 @@ A native macOS MilkDrop 3 visualizer with Syphon output, Metal GPU rendering, an
 
 ---
 
-## Step 1: Create the Xcode Project
+## Quickstart (Recommended)
+
+This repo includes a `project.yml` for **XcodeGen** — you don't need to manually add any files.
+
+```bash
+# 1. Install XcodeGen (one-time)
+brew install xcodegen
+
+# 2. Clone the repo and generate the project
+git clone <repo-url>
+cd 3
+xcodegen generate
+
+# 3. Open the generated project
+open MilkDropMac.xcodeproj
+```
+
+That's it — the project opens with all files already organized in groups.
+
+---
+
+## Manual Setup (Alternative)
+
+If you prefer not to use XcodeGen:
+
+### Step 1: Create the Xcode Project
 
 1. Open Xcode → **File → New → Project**
 2. Choose **macOS → App**
@@ -20,7 +45,7 @@ A native macOS MilkDrop 3 visualizer with Syphon output, Metal GPU rendering, an
 
 ---
 
-## Step 2: Add Source Files
+### Step 2: Add Source Files
 
 Copy all files from this repository into your Xcode project:
 
