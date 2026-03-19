@@ -223,7 +223,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             width: w, height: h,
             mipmapped: false
         )
-        desc.usage = [.renderTarget, .shaderRead]
+        desc.usage = [.renderTarget, .shaderRead, .blitSource]
         desc.storageMode = .private
         return device.makeTexture(descriptor: desc)!
     }
