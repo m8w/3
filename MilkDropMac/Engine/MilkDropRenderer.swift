@@ -70,6 +70,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     var shapePipeline:     MTLRenderPipelineState?
     var compositePipeline: MTLRenderPipelineState?
     var blendPipeline:     MTLRenderPipelineState?
+    var fractalPipeline:   MTLRenderPipelineState?
 
     // Framebuffers
     var warpTextureA: MTLTexture?   // Ping-pong feedback buffers
@@ -79,6 +80,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     var outputTexture: MTLTexture?
     var transitionTextureA: MTLTexture?  // For preset blending
     var transitionTextureB: MTLTexture?
+    var fractalTexture: MTLTexture?      // Fractal stream overlay
     var pingPong: Bool = false
 
     // Equation evaluator
@@ -92,6 +94,10 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     var transitionDuration: Float = 2.5
     var transitionType: Int32 = 0
     var isTransitioning: Bool = false
+
+    // Fractal stream
+    var fractalEnabled: Bool = false
+    var fractalBlend: Float = 0.4
 
     // Syphon
     var syphonServer: SyphonBridgeWrapper?
@@ -160,6 +166,14 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             fragment: lib.makeFunction(name: "blend_fragment"),
             pixelFormat: .bgra8Unorm
         )
+
+        // Fractal stream pipeline (additive blending for glow)
+        fractalPipeline = makePipeline(
+            vertex: lib.makeFunction(name: "warp_vertex"),
+            fragment: lib.makeFunction(name: "fractal_stream_fragment"),
+            pixelFormat: .bgra8Unorm,
+            blending: true
+        )
     }
 
     private func makePipeline(
@@ -200,6 +214,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         outputTexture    = makeTexture(w: w, h: h)
         transitionTextureA = makeTexture(w: w, h: h)
         transitionTextureB = makeTexture(w: w, h: h)
+        fractalTexture   = makeTexture(w: w, h: h)
     }
 
     private func makeTexture(w: Int, h: Int) -> MTLTexture {
@@ -261,7 +276,12 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             renderShapePass(cmd: cmdBuf, output: shapeTex)
         }
 
-        // 4. Composite pass → outputTexture
+        // 4a. Fractal pass (if enabled) → fractalTexture
+        if fractalEnabled, let fracTex = fractalTexture {
+            renderFractalPass(cmd: cmdBuf, output: fracTex)
+        }
+
+        // 4b. Composite pass → outputTexture
         if let outTex = outputTexture, let waveTex = waveTexture, let shapeTex = shapeTexture {
             renderCompositePass(cmd: cmdBuf, warp: writeTex, wave: waveTex, shape: shapeTex, output: outTex)
         }
@@ -441,6 +461,8 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
                     Float,Float,Float,Float,Float,Float,Float,Float,
                     Float,Float,Float,Float,Float,Float,Float,Float,
                     Float,Float,Float,Float,Float,Float,Float,Float)
+            var fractalBlend: Float
+            var fractalEnabled: Int32
         }
         var cu = CompositeUniforms(
             brightness: 1.0,
@@ -452,13 +474,31 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             time: uniforms.time,
             bass: uniforms.bass,
             treble: uniforms.treble,
-            q: uniforms.q
+            q: uniforms.q,
+            fractalBlend: fractalBlend,
+            fractalEnabled: fractalEnabled ? 1 : 0
         )
 
         enc.setFragmentBytes(&cu, length: MemoryLayout<CompositeUniforms>.size, index: 0)
         enc.setFragmentTexture(warp,  index: 0)
         enc.setFragmentTexture(wave,  index: 1)
         enc.setFragmentTexture(shape, index: 2)
+        if fractalEnabled, let fracTex = fractalTexture {
+            enc.setFragmentTexture(fracTex, index: 3)
+        }
+        drawQuad(enc: enc)
+        enc.endEncoding()
+    }
+
+    private func renderFractalPass(cmd: MTLCommandBuffer, output: MTLTexture) {
+        guard let pipeline = fractalPipeline else { return }
+        let desc = makeRenderPassDesc(output, clear: true, clearColor: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0))
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { return }
+        enc.setRenderPipelineState(pipeline)
+
+        var u = uniforms
+        enc.setVertexBytes(&u, length: MemoryLayout<MilkDropUniforms>.size, index: 0)
+        enc.setFragmentBytes(&u, length: MemoryLayout<MilkDropUniforms>.size, index: 0)
         drawQuad(enc: enc)
         enc.endEncoding()
     }

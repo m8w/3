@@ -174,6 +174,9 @@ struct VisualizerView: NSViewRepresentable {
             renderer.loadPreset(preset)
         }
         renderer.setSyphonEnabled(state.syphonEnabled)
+        renderer.fractalEnabled = state.fractalStreamEnabled
+        renderer.fractalBlend   = Float(state.fractalBlend)
+        renderer.transitionType = state.morphingTechnique
     }
 
     func makeCoordinator() -> Coordinator {
@@ -220,6 +223,7 @@ struct SidebarView: View {
                 case .presets:  PresetBrowserView()
                 case .editor:   QuickEditorView()
                 case .audio:    AudioSettingsView()
+                case .morph:    MorphingView()
                 case .syphon:   SyphonStatusView()
                 case .settings: SettingsView()
                 }

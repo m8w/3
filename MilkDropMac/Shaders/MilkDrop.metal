@@ -203,6 +203,9 @@ struct CompositeUniforms {
     float  treble;
     // q variables for composite shader
     float q[32];
+    // Fractal stream overlay
+    float fractalBlend;
+    int   fractalEnabled;
 };
 
 vertex VertexOut composite_vertex(
@@ -221,6 +224,7 @@ fragment float4 composite_fragment(
     texture2d<float> warpTex        [[texture(0)]],   // Warped frame
     texture2d<float> waveTex        [[texture(1)]],   // Wave layer
     texture2d<float> shapeTex       [[texture(2)]],   // Shapes layer
+    texture2d<float> fractalTex     [[texture(3)]],   // Fractal overlay
     constant CompositeUniforms &u   [[buffer(0)]]
 ) {
     constexpr sampler s(address::clamp_to_edge, filter::linear);
@@ -234,6 +238,12 @@ fragment float4 composite_fragment(
     float4 color = warp;
     color.rgb = mix(color.rgb, waves.rgb, waves.a);
     color.rgb = mix(color.rgb, shapes.rgb, shapes.a);
+
+    // Fractal stream overlay (additive blend for glow effect)
+    if (u.fractalEnabled != 0) {
+        float4 fractal = fractalTex.sample(s, uv);
+        color.rgb += fractal.rgb * fractal.a * u.fractalBlend;
+    }
 
     // Gamma / brightness
     color.rgb = pow(max(color.rgb, 0.0), float3(u.gamma));
@@ -322,6 +332,60 @@ fragment float4 blend_fragment(
             result = mix(colA, colB, step(dist2, t));
             break;
         }
+        case 6: { // Bezier warp morph
+            float mt = 1.0 - t;
+            float mt2 = mt * mt;
+            float t2 = t * t;
+            // Control points orbit with time for organic feel
+            float2 ctrl1 = float2(0.5 + sin(u.time * 0.7) * 0.3, 0.2 + cos(u.time * 0.5) * 0.2);
+            float2 ctrl2 = float2(0.5 + cos(u.time * 0.6) * 0.3, 0.8 + sin(u.time * 0.4) * 0.2);
+            // Warp sample UV via Bezier offset
+            float2 warpOffset = (ctrl1 * 3.0 * mt2 * t + ctrl2 * 3.0 * mt * t2) - uv;
+            float2 warpedUV = uv + warpOffset * t * (1.0 - t) * 2.0;
+            warpedUV = clamp(warpedUV, 0.0, 1.0);
+            float4 warpedA = texA.sample(s, warpedUV);
+            result = mix(warpedA, colB, smoothstep(0.2, 0.8, t));
+            break;
+        }
+        case 7: { // Mesh morph (grid-based warp)
+            float2 grid = fract(uv * 8.0);
+            float2 cell = floor(uv * 8.0) / 8.0;
+            float2 morphOff = float2(
+                sin(cell.x * 6.28 + cell.y * 4.19 + u.time) * 0.08,
+                cos(cell.x * 5.13 + cell.y * 7.31 + u.time * 0.8) * 0.08
+            );
+            float2 uvA = clamp(uv + morphOff * (1.0 - t), 0.0, 1.0);
+            float2 uvB = clamp(uv - morphOff * t, 0.0, 1.0);
+            result = mix(texA.sample(s, uvA), texB.sample(s, uvB), smoothstep(0.1, 0.9, t));
+            break;
+        }
+        case 8: { // Fractal dissolve
+            float2 fc = (uv - 0.5) * 3.5;
+            float2 z2 = float2(0.0);
+            int fiter = 0;
+            for (int i = 0; i < 24; i++) {
+                z2 = float2(z2.x * z2.x - z2.y * z2.y + fc.x,
+                            2.0 * z2.x * z2.y + fc.y);
+                if (dot(z2, z2) > 4.0) break;
+                fiter++;
+            }
+            float mask = float(fiter) / 24.0;
+            result = mix(colA, colB, step(mask, t));
+            break;
+        }
+        case 9: { // Fractal stream (spiral twist)
+            float2 p = uv * 2.0 - 1.0;
+            float radius = length(p);
+            float angle = atan2(p.y, p.x);
+            float twist = sin(radius * 4.0 * 3.14159 - u.time * 2.0) * t * 1.5;
+            float2 twistedUV = float2(
+                0.5 + 0.5 * cos(angle + twist) * radius,
+                0.5 + 0.5 * sin(angle + twist) * radius
+            );
+            twistedUV = clamp(twistedUV, 0.0, 1.0);
+            result = mix(texA.sample(s, twistedUV), colB, smoothstep(0.15, 0.85, t));
+            break;
+        }
         default: { // Simple cross-fade
             result = mix(colA, colB, t);
             break;
@@ -329,6 +393,55 @@ fragment float4 blend_fragment(
     }
 
     return result;
+}
+
+// MARK: - Fractal stream visualizer (audio-reactive Julia set)
+
+fragment float4 fractal_stream_fragment(
+    VertexOut in [[stage_in]],
+    constant MilkDropUniforms &u [[buffer(0)]]
+) {
+    float2 uv = in.texcoord * 2.0 - 1.0;
+    uv.x *= u.aspect;
+
+    // Julia set — c parameter driven by audio + time
+    float2 c = float2(
+        -0.70 + sin(u.time * 0.17) * (0.25 + u.bass * 0.35),
+         0.27 + cos(u.time * 0.11) * (0.18 + u.treble * 0.28)
+    );
+
+    // Zoom driven by bass
+    float zoom = 1.8 / max(u.zoom * 0.6, 0.4);
+    float2 z = uv * zoom;
+
+    int iterations = 0;
+    const int maxIter = 96;
+    while (iterations < maxIter && dot(z, z) < 4.0) {
+        z = float2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+        iterations++;
+    }
+
+    if (iterations == maxIter) {
+        // Interior: deep glow pulsed by vol
+        float glow = 0.04 + u.vol * 0.12;
+        return float4(glow * 0.3, glow * 0.1, glow * 0.8, 0.9);
+    }
+
+    // Smooth escape time for banding-free coloring
+    float escape = float(iterations) - log2(log2(dot(z, z)));
+    float t = fract(escape * 0.04 + u.time * 0.015);
+
+    // Audio-reactive palette
+    float3 col;
+    col.r = 0.5 + 0.5 * sin(t * 6.2832 * 1.0 + u.bass   * 5.0 + u.time * 0.4);
+    col.g = 0.5 + 0.5 * sin(t * 6.2832 * 1.7 + u.mid    * 3.5 + u.time * 0.3 + 2.1);
+    col.b = 0.5 + 0.5 * sin(t * 6.2832 * 2.3 + u.treble * 2.5 + u.time * 0.6 + 4.2);
+
+    // Brightness responds to overall volume
+    float brightness = 0.25 + u.vol * 0.75;
+    float alpha = 0.6 + u.bass * 0.3;
+
+    return float4(col * brightness, alpha);
 }
 
 // MARK: - Spectrum / FFT visualization overlay

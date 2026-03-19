@@ -30,6 +30,11 @@ class AppState: ObservableObject {
     @Published var doublePresetActive: Bool = false
     @Published var doublePresetBlend: Double = 0.5
 
+    // MARK: - Morphing & fractal stream
+    @Published var morphingTechnique: Int32 = 6    // Default: bezier warp
+    @Published var fractalStreamEnabled: Bool = false
+    @Published var fractalBlend: Double = 0.4
+
     // MARK: - Visual settings
     @Published var renderResolution: RenderResolution = .native
     @Published var fps: Int = 60
@@ -153,6 +158,36 @@ class AppState: ObservableObject {
 
 // MARK: - Supporting types
 
+enum MorphingTechnique: Int32, CaseIterable, Identifiable {
+    case zoom            = 0
+    case sideWipe        = 1
+    case plasma          = 2
+    case circle          = 3
+    case checkerboard    = 4
+    case stars           = 5
+    case bezierWarp      = 6
+    case meshMorph       = 7
+    case fractalDissolve = 8
+    case fractalStream   = 9
+
+    var id: Int32 { rawValue }
+
+    var name: String {
+        switch self {
+        case .zoom:            return "Zoom"
+        case .sideWipe:        return "Side Wipe"
+        case .plasma:          return "Plasma"
+        case .circle:          return "Circle"
+        case .checkerboard:    return "Checkerboard"
+        case .stars:           return "Stars"
+        case .bezierWarp:      return "Bezier Warp"
+        case .meshMorph:       return "Mesh Morph"
+        case .fractalDissolve: return "Fractal Dissolve"
+        case .fractalStream:   return "Fractal Stream"
+        }
+    }
+}
+
 enum RenderResolution: String, CaseIterable {
     case quarter = "Quarter"
     case half    = "Half"
@@ -182,6 +217,7 @@ enum SidebarTab: String, CaseIterable {
     case presets  = "Presets"
     case editor   = "Editor"
     case audio    = "Audio"
+    case morph    = "Morph"
     case syphon   = "Syphon"
     case settings = "Settings"
 
@@ -190,6 +226,7 @@ enum SidebarTab: String, CaseIterable {
         case .presets:  return "square.grid.2x2"
         case .editor:   return "chevron.left.forwardslash.chevron.right"
         case .audio:    return "waveform"
+        case .morph:    return "sparkles"
         case .syphon:   return "arrow.triangle.branch"
         case .settings: return "gearshape"
         }
