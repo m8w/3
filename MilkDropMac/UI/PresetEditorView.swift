@@ -50,9 +50,9 @@ struct PresetEditorView: View {
                         // Preset info
                         ParameterSection(title: "Preset Info") {
                             ParameterField(label: "Name", text: $preset.name)
-                                .onChange(of: preset.name) { _ in isDirty = true }
+                                .onChange(of: preset.name) { isDirty = true }
                             ParameterField(label: "Author", text: $preset.author)
-                                .onChange(of: preset.author) { _ in isDirty = true }
+                                .onChange(of: preset.author) { isDirty = true }
 
                             // Rating
                             HStack {
@@ -83,10 +83,10 @@ struct PresetEditorView: View {
                             ParamSlider(label: "Scale Y",  value: $params.szy,       range: 0.5...2.0)
                             ParamSlider(label: "Gamma",    value: $params.gamma,     range: 0.1...3.0)
                         }
-                        .onChange(of: params.zoomAmount)   { _ in markDirty() }
-                        .onChange(of: params.rotatAmount)  { _ in markDirty() }
-                        .onChange(of: params.warpScale)    { _ in markDirty() }
-                        .onChange(of: params.decay)        { _ in markDirty() }
+                        .onChange(of: params.zoomAmount)   { markDirty() }
+                        .onChange(of: params.rotatAmount)  { markDirty() }
+                        .onChange(of: params.warpScale)    { markDirty() }
+                        .onChange(of: params.decay)        { markDirty() }
 
                         // Video echo (feedback)
                         ParameterSection(title: "Video Echo") {
@@ -337,7 +337,7 @@ struct EditorCodeView: View {
             .background(Color(hex: "0c0c0c"))
             .foregroundColor(Color(hex: "e0e0e0"))
             .padding(12)
-            .onChange(of: binding.wrappedValue) { _ in onChange() }
+            .onChange(of: binding.wrappedValue) { onChange() }
             .overlay(
                 // Placeholder
                 Group {

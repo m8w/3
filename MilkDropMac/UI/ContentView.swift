@@ -169,7 +169,7 @@ struct VisualizerView: NSViewRepresentable {
 
     func updateNSView(_ view: MTKView, context: Context) {
         guard let renderer = context.coordinator.renderer else { return }
-        renderer.updateAudio(state.audioData)
+        renderer.updateAudio(state.audioEngine.audioData)
         if let preset = state.presetManager.currentPreset {
             renderer.loadPreset(preset)
         }
