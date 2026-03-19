@@ -7,7 +7,7 @@ import AppKit
 @MainActor
 class AppState: ObservableObject {
     // MARK: - Core systems
-    let presetManager   = PresetManager()
+    var presetManager   = PresetManager()
     let audioEngine     = AudioEngine()
     let beatDetector    = BeatDetector()
     var renderer: MilkDropRenderer?
@@ -74,6 +74,11 @@ class AppState: ObservableObject {
     }
 
     private func setupBindings() {
+        // Forward PresetManager changes to AppState so views re-render
+        presetManager.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
         // Connect beat detector to preset switching
         beatDetector.$hardcutDetected
             .filter { $0 && self.beatDetectionEnabled && !self.isPresetLocked }
