@@ -68,7 +68,7 @@ struct MilkDropPreset: Identifiable, Hashable, Codable {
 
 // MARK: - Preset parameters (the actual MilkDrop variables)
 
-struct PresetParameters: Codable {
+struct PresetParameters: Codable, Equatable, Hashable {
     // General
     var rating: Float           = 3.0
     var gamma:  Float           = 1.0
@@ -117,7 +117,7 @@ struct PresetParameters: Codable {
     // Transition
     var blendType: TransitionBlend = .zoom
 
-    enum TransitionBlend: String, Codable, CaseIterable {
+    enum TransitionBlend: String, Codable, CaseIterable, Equatable, Hashable {
         case zoom, side, plasma, cercle, plasma2, plasma3, snail,
              triangle, donuts, corner, patches, checkerboard, bubbles, stars, cisor
     }
@@ -125,7 +125,7 @@ struct PresetParameters: Codable {
 
 // MARK: - Wave definition
 
-struct PresetWave: Codable, Identifiable {
+struct PresetWave: Codable, Identifiable, Equatable, Hashable {
     var id: Int
     var enabled: Bool    = false
     var samples: Int     = 512
@@ -141,7 +141,7 @@ struct PresetWave: Codable, Identifiable {
 
 // MARK: - Shape definition
 
-struct PresetShape: Codable, Identifiable {
+struct PresetShape: Codable, Identifiable, Equatable, Hashable {
     var id: Int
     var enabled:    Bool  = false
     var sides:      Int   = 4

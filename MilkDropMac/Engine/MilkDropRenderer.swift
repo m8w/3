@@ -308,7 +308,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
         // 7. Syphon publish
         if syphonEnabled {
-            syphonServer?.publish(texture: finalTexture, commandBuffer: cmdBuf)
+            syphonServer?.publishTexture(finalTexture, commandBuffer: cmdBuf)
         }
 
         cmdBuf.present(drawable)
@@ -406,13 +406,16 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
     private func renderShape(shape: PresetShape, enc: MTLRenderCommandEncoder) {
         let sides = max(shape.sides, 3)
+        // Build triangle list (Metal has no triangleFan)
         var positions = [SIMD2<Float>]()
-        positions.append(SIMD2<Float>(shape.x, shape.y))  // center
-        for i in 0...sides {
-            let angle = (Float(i) / Float(sides)) * 2 * .pi + shape.ang
-            let x = shape.x + cos(angle) * shape.radius * (uniforms.aspect > 0 ? 1 / uniforms.aspect : 1)
-            let y = shape.y + sin(angle) * shape.radius
-            positions.append(SIMD2<Float>(x, y))
+        let center = SIMD2<Float>(shape.x, shape.y)
+        let aspectInv: Float = uniforms.aspect > 0 ? 1 / uniforms.aspect : 1
+        for i in 0..<sides {
+            let a1 = (Float(i)     / Float(sides)) * 2 * .pi + shape.ang
+            let a2 = (Float(i + 1) / Float(sides)) * 2 * .pi + shape.ang
+            positions.append(center)
+            positions.append(SIMD2<Float>(shape.x + cos(a1) * shape.radius * aspectInv, shape.y + sin(a1) * shape.radius))
+            positions.append(SIMD2<Float>(shape.x + cos(a2) * shape.radius * aspectInv, shape.y + sin(a2) * shape.radius))
         }
 
         struct ShapeUniforms {
@@ -440,7 +443,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         enc.setVertexBytes(&positions, length: positions.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
         enc.setVertexBytes(&su, length: MemoryLayout<ShapeUniforms>.size, index: 1)
         enc.setVertexBytes(&u, length: MemoryLayout<MilkDropUniforms>.size, index: 2)
-        enc.drawPrimitives(type: .triangleFan, vertexStart: 0, vertexCount: positions.count)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: positions.count)
     }
 
     private func renderCompositePass(
