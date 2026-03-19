@@ -92,7 +92,7 @@ class AppState: ObservableObject {
             .sink { [weak self] data in
                 self?.beatDetector.process(data)
                 self?.audioLevel = Double(data.rms)
-                self?.beatStrength = data.bassLevel
+                self?.beatStrength = Double(data.bassLevel)
             }
             .store(in: &cancellables)
 

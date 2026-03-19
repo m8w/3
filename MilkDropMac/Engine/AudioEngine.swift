@@ -124,8 +124,23 @@ class AudioEngine: ObservableObject {
         formatConverter = AVAudioConverter(from: inputFormat, to: targetFormat)
 
         inputNode.installTap(onBus: 0, bufferSize: 512, format: inputFormat) { [weak self] buffer, _ in
-            self?.audioQueue.async {
-                self?.processTap(buffer: buffer, targetFormat: targetFormat)
+            guard let self else { return }
+            let frameLength = buffer.frameLength
+            let frameCapacity = buffer.frameCapacity
+            let format = buffer.format
+            // Copy PCM data to avoid capturing non-Sendable AVAudioPCMBuffer
+            guard let copy = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCapacity),
+                  let srcData = buffer.floatChannelData,
+                  let dstData = copy.floatChannelData else { return }
+            copy.frameLength = frameLength
+            let channelCount = Int(format.channelCount)
+            for ch in 0..<channelCount {
+                memcpy(dstData[ch], srcData[ch], Int(frameLength) * MemoryLayout<Float>.size)
+            }
+            self.audioQueue.async { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.processTap(buffer: copy, targetFormat: targetFormat)
+                }
             }
         }
 
@@ -187,19 +202,22 @@ class AudioEngine: ObservableObject {
         let halfN = fftSize / 2
         var realPart = [Float](repeating: 0, count: halfN)
         var imagPart = [Float](repeating: 0, count: halfN)
-        var splitComplex = DSPSplitComplex(realp: &realPart, imagp: &imagPart)
-
-        windowed.withUnsafeBytes { ptr in
-            let complexPtr = ptr.bindMemory(to: DSPComplex.self)
-            vDSP_ctoz(complexPtr.baseAddress!, 2, &splitComplex, 1, vDSP_Length(halfN))
-        }
-
-        let log2n = vDSP_Length(log2(Double(fftSize)))
-        vDSP_fft_zrip(fftSetup!, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
-
-        // Magnitude spectrum
         var magnitudes = [Float](repeating: 0, count: halfN)
-        vDSP_zvabs(&splitComplex, 1, &magnitudes, 1, vDSP_Length(halfN))
+        realPart.withUnsafeMutableBufferPointer { realBuf in
+            imagPart.withUnsafeMutableBufferPointer { imagBuf in
+                var splitComplex = DSPSplitComplex(realp: realBuf.baseAddress!, imagp: imagBuf.baseAddress!)
+
+                windowed.withUnsafeBytes { ptr in
+                    let complexPtr = ptr.bindMemory(to: DSPComplex.self)
+                    vDSP_ctoz(complexPtr.baseAddress!, 2, &splitComplex, 1, vDSP_Length(halfN))
+                }
+
+                let log2n = vDSP_Length(log2(Double(fftSize)))
+                vDSP_fft_zrip(fftSetup!, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
+
+                vDSP_zvabs(&splitComplex, 1, &magnitudes, 1, vDSP_Length(halfN))
+            }
+        }
 
         // Scale
         var scale: Float = 2.0 / Float(fftSize)

@@ -91,7 +91,7 @@ class PresetManager: ObservableObject {
             ) else { return [] }
 
             var result: [MilkDropPreset] = []
-            for case let url as URL in enumerator {
+            for case let url as URL in enumerator.allObjects {
                 guard ["milk", "milk2"].contains(url.pathExtension.lowercased()) else { continue }
                 guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
                 let name = url.deletingPathExtension().lastPathComponent
