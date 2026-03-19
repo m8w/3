@@ -114,7 +114,7 @@ struct PresetBrowserView: View {
                             .padding(8)
                         }
                     }
-                    .onChange(of: state.presetManager.currentPreset?.id) { id in
+                    .onChange(of: state.presetManager.currentPreset?.id) { _, id in
                         if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } }
                     }
                 }
