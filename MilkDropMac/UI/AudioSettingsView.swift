@@ -56,7 +56,10 @@ struct AudioSettingsView: View {
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .font(.system(size: 12))
 
-                    Picker("Mode", selection: $state.beatDetector.hardcutMode) {
+                    Picker("Mode", selection: Binding(
+                        get: { state.beatDetector.hardcutMode },
+                        set: { state.beatDetector.hardcutMode = $0 }
+                    )) {
                         ForEach(BeatDetector.HardcutMode.allCases, id: \.self) { m in
                             Text(m.rawValue).tag(m)
                         }

@@ -162,7 +162,7 @@ struct QuickEditorView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ParameterSection(title: "Quick Adjust") {
-                            if var params = state.presetManager.currentPreset?.parameters {
+                            if let params = state.presetManager.currentPreset?.parameters {
                                 ParamSlider(label: "Zoom",  value: .constant(params.zoomAmount),  range: 0.1...5)
                                 ParamSlider(label: "Warp",  value: .constant(params.warpScale),   range: 0...10)
                                 ParamSlider(label: "Decay", value: .constant(params.decay),       range: 0.8...1.0)

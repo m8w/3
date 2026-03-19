@@ -348,7 +348,6 @@ fragment float4 blend_fragment(
             break;
         }
         case 7: { // Mesh morph (grid-based warp)
-            float2 grid = fract(uv * 8.0);
             float2 cell = floor(uv * 8.0) / 8.0;
             float2 morphOff = float2(
                 sin(cell.x * 6.28 + cell.y * 4.19 + u.time) * 0.08,
