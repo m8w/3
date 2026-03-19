@@ -443,6 +443,16 @@ fragment float4 fractal_stream_fragment(
     return float4(col * brightness, alpha);
 }
 
+// MARK: - Present pass: copy finalTexture to drawable (avoids blit format constraints)
+
+fragment float4 copy_fragment(
+    VertexOut in           [[stage_in]],
+    texture2d<float> src   [[texture(0)]]
+) {
+    constexpr sampler s(address::clamp_to_edge, filter::linear);
+    return src.sample(s, in.texcoord);
+}
+
 // MARK: - Spectrum / FFT visualization overlay
 
 vertex VertexOut spectrum_vertex(

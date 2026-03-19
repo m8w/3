@@ -71,6 +71,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     var compositePipeline: MTLRenderPipelineState?
     var blendPipeline:     MTLRenderPipelineState?
     var fractalPipeline:   MTLRenderPipelineState?
+    var copyPipeline:      MTLRenderPipelineState?
 
     // Framebuffers
     var warpTextureA: MTLTexture?   // Ping-pong feedback buffers
@@ -174,6 +175,13 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             pixelFormat: .bgra8Unorm,
             blending: true
         )
+
+        // Present pipeline: copy finalTexture to drawable via render pass
+        copyPipeline = makePipeline(
+            vertex: lib.makeFunction(name: "warp_vertex"),
+            fragment: lib.makeFunction(name: "copy_fragment"),
+            pixelFormat: .bgra8Unorm
+        )
     }
 
     private func makePipeline(
@@ -223,7 +231,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             width: w, height: h,
             mipmapped: false
         )
-        desc.usage = [.renderTarget, .shaderRead, .blitSource]
+        desc.usage = [.renderTarget, .shaderRead]
         desc.storageMode = .private
         return device.makeTexture(descriptor: desc)!
     }
@@ -303,15 +311,14 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             cmdBuf.commit()
             return
         }
-        if let blit = cmdBuf.makeBlitCommandEncoder() {
-            blit.copy(from: finalTexture,
-                      sourceSlice: 0, sourceLevel: 0,
-                      sourceOrigin: .init(x: 0, y: 0, z: 0),
-                      sourceSize: .init(width: finalTexture.width, height: finalTexture.height, depth: 1),
-                      to: drawTex,
-                      destinationSlice: 0, destinationLevel: 0,
-                      destinationOrigin: .init(x: 0, y: 0, z: 0))
-            blit.endEncoding()
+        if let pipeline = copyPipeline {
+            let desc = makeRenderPassDesc(drawTex)
+            if let enc = cmdBuf.makeRenderCommandEncoder(descriptor: desc) {
+                enc.setRenderPipelineState(pipeline)
+                enc.setFragmentTexture(finalTexture, index: 0)
+                drawQuad(enc: enc)
+                enc.endEncoding()
+            }
         }
 
         // 7. Syphon publish
