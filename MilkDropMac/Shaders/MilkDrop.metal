@@ -7,10 +7,10 @@ using namespace metal;
 
 // MARK: - Shared types
 
-// Raw vertex layout matching drawQuad() in Swift (no vertex descriptor needed)
-struct QuadVertex {
-    float2 position;
-    float2 texcoord;
+// Vertex input — fed via vertex descriptor (attr 0=position, attr 1=texcoord, buffer 0)
+struct VertexIn {
+    float2 position [[attribute(0)]];
+    float2 texcoord [[attribute(1)]];
 };
 
 struct VertexOut {
@@ -19,15 +19,11 @@ struct VertexOut {
     float4 color;
 };
 
-// Single full-screen quad vertex shader used by all passes.
-// Receives vertices via buffer(0) using vertex_id (no vertex descriptor required).
-vertex VertexOut quad_vertex(
-    uint vid                        [[vertex_id]],
-    constant QuadVertex *vertices   [[buffer(0)]]
-) {
+// Full-screen quad vertex shader. Requires a vertex descriptor in the pipeline.
+vertex VertexOut quad_vertex(VertexIn in [[stage_in]]) {
     VertexOut out;
-    out.position = float4(vertices[vid].position, 0.0, 1.0);
-    out.texcoord = vertices[vid].texcoord;
+    out.position = float4(in.position, 0.0, 1.0);
+    out.texcoord = in.texcoord;
     out.color    = float4(1.0);
     return out;
 }
