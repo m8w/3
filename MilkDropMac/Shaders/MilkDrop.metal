@@ -7,9 +7,10 @@ using namespace metal;
 
 // MARK: - Shared types
 
-struct VertexIn {
-    float2 position [[attribute(0)]];
-    float2 texcoord [[attribute(1)]];
+// Raw vertex layout matching drawQuad() in Swift (no vertex descriptor needed)
+struct QuadVertex {
+    float2 position;
+    float2 texcoord;
 };
 
 struct VertexOut {
@@ -17,6 +18,19 @@ struct VertexOut {
     float2 texcoord;
     float4 color;
 };
+
+// Single full-screen quad vertex shader used by all passes.
+// Receives vertices via buffer(0) using vertex_id (no vertex descriptor required).
+vertex VertexOut quad_vertex(
+    uint vid                        [[vertex_id]],
+    constant QuadVertex *vertices   [[buffer(0)]]
+) {
+    VertexOut out;
+    out.position = float4(vertices[vid].position, 0.0, 1.0);
+    out.texcoord = vertices[vid].texcoord;
+    out.color    = float4(1.0);
+    return out;
+}
 
 struct MilkDropUniforms {
     // Time
@@ -60,18 +74,6 @@ struct MilkDropUniforms {
 };
 
 // MARK: - Warp pass: distorts the feedback texture
-
-// Full-screen quad vertex shader
-vertex VertexOut warp_vertex(
-    VertexIn in [[stage_in]],
-    constant MilkDropUniforms &u [[buffer(0)]]
-) {
-    VertexOut out;
-    out.position = float4(in.position, 0, 1);
-    out.texcoord = in.texcoord;
-    out.color = float4(1);
-    return out;
-}
 
 // Warp (per-vertex) — applies zoom, rotation, warp distortion, feedback
 fragment float4 warp_fragment(
@@ -208,17 +210,6 @@ struct CompositeUniforms {
     int   fractalEnabled;
 };
 
-vertex VertexOut composite_vertex(
-    VertexIn in [[stage_in]],
-    constant CompositeUniforms &u [[buffer(0)]]
-) {
-    VertexOut out;
-    out.position = float4(in.position, 0, 1);
-    out.texcoord = in.texcoord;
-    out.color    = float4(1);
-    return out;
-}
-
 fragment float4 composite_fragment(
     VertexOut in                    [[stage_in]],
     texture2d<float> warpTex        [[texture(0)]],   // Warped frame
@@ -265,17 +256,6 @@ struct BlendUniforms {
     float  time;
     float2 resolution;
 };
-
-vertex VertexOut blend_vertex(
-    VertexIn in [[stage_in]],
-    constant BlendUniforms &u [[buffer(0)]]
-) {
-    VertexOut out;
-    out.position = float4(in.position, 0, 1);
-    out.texcoord = in.texcoord;
-    out.color    = float4(1);
-    return out;
-}
 
 fragment float4 blend_fragment(
     VertexOut in                [[stage_in]],

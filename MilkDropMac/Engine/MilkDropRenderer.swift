@@ -131,9 +131,11 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     private func setupPipelines() {
         guard let lib = library else { return }
 
+        let quad = lib.makeFunction(name: "quad_vertex")
+
         // Warp pipeline
         warpPipeline = makePipeline(
-            vertex: lib.makeFunction(name: "warp_vertex"),
+            vertex: quad,
             fragment: lib.makeFunction(name: "warp_fragment"),
             pixelFormat: .bgra8Unorm
         )
@@ -156,21 +158,21 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
         // Composite pipeline
         compositePipeline = makePipeline(
-            vertex: lib.makeFunction(name: "composite_vertex"),
+            vertex: quad,
             fragment: lib.makeFunction(name: "composite_fragment"),
             pixelFormat: .bgra8Unorm
         )
 
         // Blend pipeline
         blendPipeline = makePipeline(
-            vertex: lib.makeFunction(name: "blend_vertex"),
+            vertex: quad,
             fragment: lib.makeFunction(name: "blend_fragment"),
             pixelFormat: .bgra8Unorm
         )
 
         // Fractal stream pipeline (additive blending for glow)
         fractalPipeline = makePipeline(
-            vertex: lib.makeFunction(name: "warp_vertex"),
+            vertex: quad,
             fragment: lib.makeFunction(name: "fractal_stream_fragment"),
             pixelFormat: .bgra8Unorm,
             blending: true
@@ -178,7 +180,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
         // Present pipeline: copy finalTexture to drawable via render pass
         copyPipeline = makePipeline(
-            vertex: lib.makeFunction(name: "warp_vertex"),
+            vertex: quad,
             fragment: lib.makeFunction(name: "copy_fragment"),
             pixelFormat: .bgra8Unorm
         )
