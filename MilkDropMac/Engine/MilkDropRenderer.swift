@@ -273,7 +273,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             : (warpTextureA!, warpTextureB!)
         pingPong.toggle()
 
-        // 1. Warp pass
+        // 1. Warp pass: distort previous composite (readTex) → writeTex
         renderWarpPass(cmd: cmdBuf, input: readTex, output: writeTex)
 
         // 2. Wave pass (into waveTexture)
@@ -291,17 +291,23 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             renderFractalPass(cmd: cmdBuf, output: fracTex)
         }
 
-        // 4b. Composite pass → outputTexture
-        if let outTex = outputTexture, let waveTex = waveTexture, let shapeTex = shapeTexture {
-            renderCompositePass(cmd: cmdBuf, warp: writeTex, wave: waveTex, shape: shapeTex, output: outTex)
+        // 4b. Composite pass: warp + waves + shapes → readTex
+        // readTex is safe to write now (warp is done reading it).
+        // Writing back to readTex completes the feedback loop:
+        // next frame the warp will distort this full composite.
+        let waveTex   = waveTexture
+        let shapeTex  = shapeTexture
+        if let w = waveTex, let s = shapeTex {
+            renderCompositePass(cmd: cmdBuf, warp: writeTex, wave: w, shape: s, output: readTex)
         }
 
         // 5. Transition blend (if active)
-        var finalTexture: MTLTexture = outputTexture ?? writeTex
-        if isTransitioning, let outTex = outputTexture,
-           let txA = transitionTextureA, let txB = transitionTextureB {
-            renderBlendPass(cmd: cmdBuf, a: txA, b: txB, output: outTex)
-            finalTexture = outTex
+        var finalTexture: MTLTexture = readTex
+        if isTransitioning,
+           let txA = transitionTextureA, let txB = transitionTextureB,
+           let blendOut = outputTexture {
+            renderBlendPass(cmd: cmdBuf, a: txA, b: txB, output: blendOut)
+            finalTexture = blendOut
         }
 
         // 6. Blit to drawable — guard against size mismatch (window resize race)
