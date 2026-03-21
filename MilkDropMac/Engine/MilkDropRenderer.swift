@@ -137,11 +137,10 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         warpPipeline = makePipeline(
             vertex: quad,
             fragment: lib.makeFunction(name: "warp_fragment"),
-            pixelFormat: .bgra8Unorm,
-            quadVertexDescriptor: true
+            pixelFormat: .bgra8Unorm
         )
 
-        // Wave pipeline (line rendering — uses its own vertex shader, no quad descriptor)
+        // Wave pipeline (line rendering — uses its own vertex shader)
         wavePipeline = makePipeline(
             vertex: lib.makeFunction(name: "wave_vertex"),
             fragment: lib.makeFunction(name: "wave_fragment"),
@@ -161,16 +160,14 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         compositePipeline = makePipeline(
             vertex: quad,
             fragment: lib.makeFunction(name: "composite_fragment"),
-            pixelFormat: .bgra8Unorm,
-            quadVertexDescriptor: true
+            pixelFormat: .bgra8Unorm
         )
 
         // Blend pipeline
         blendPipeline = makePipeline(
             vertex: quad,
             fragment: lib.makeFunction(name: "blend_fragment"),
-            pixelFormat: .bgra8Unorm,
-            quadVertexDescriptor: true
+            pixelFormat: .bgra8Unorm
         )
 
         // Fractal stream pipeline (additive blending for glow)
@@ -178,16 +175,14 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             vertex: quad,
             fragment: lib.makeFunction(name: "fractal_stream_fragment"),
             pixelFormat: .bgra8Unorm,
-            blending: true,
-            quadVertexDescriptor: true
+            blending: true
         )
 
         // Present pipeline: copy finalTexture to drawable via render pass
         copyPipeline = makePipeline(
             vertex: quad,
             fragment: lib.makeFunction(name: "copy_fragment"),
-            pixelFormat: .bgra8Unorm,
-            quadVertexDescriptor: true
+            pixelFormat: .bgra8Unorm
         )
     }
 
@@ -195,8 +190,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         vertex: MTLFunction?,
         fragment: MTLFunction?,
         pixelFormat: MTLPixelFormat,
-        blending: Bool = false,
-        quadVertexDescriptor: Bool = false
+        blending: Bool = false
     ) -> MTLRenderPipelineState? {
         guard let v = vertex, let f = fragment else { return nil }
         let desc = MTLRenderPipelineDescriptor()
@@ -210,14 +204,6 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             att.destinationRGBBlendFactor = .oneMinusSourceAlpha
             att.sourceAlphaBlendFactor    = .one
             att.destinationAlphaBlendFactor = .zero
-        }
-        if quadVertexDescriptor {
-            // Matches drawQuad()'s QuadVertex: float2 pos + float2 uv, stride 16
-            let vd = MTLVertexDescriptor()
-            vd.attributes[0].format = .float2; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
-            vd.attributes[1].format = .float2; vd.attributes[1].offset = 8;  vd.attributes[1].bufferIndex = 0
-            vd.layouts[0].stride = 16
-            desc.vertexDescriptor = vd
         }
         return try? device.makeRenderPipelineState(descriptor: desc)
     }
@@ -537,7 +523,6 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         enc.setRenderPipelineState(pipeline)
 
         var u = uniforms
-        enc.setVertexBytes(&u, length: MemoryLayout<MilkDropUniforms>.size, index: 0)
         enc.setFragmentBytes(&u, length: MemoryLayout<MilkDropUniforms>.size, index: 0)
         drawQuad(enc: enc)
         enc.endEncoding()
@@ -601,17 +586,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     }
 
     private func drawQuad(enc: MTLRenderCommandEncoder) {
-        // Full-screen quad: two triangles covering NDC [-1,1]x[-1,1]
-        struct QuadVertex { var pos: SIMD2<Float>; var uv: SIMD2<Float> }
-        var quad: [QuadVertex] = [
-            .init(pos: .init(-1,-1), uv: .init(0,1)),
-            .init(pos: .init( 1,-1), uv: .init(1,1)),
-            .init(pos: .init(-1, 1), uv: .init(0,0)),
-            .init(pos: .init(-1, 1), uv: .init(0,0)),
-            .init(pos: .init( 1,-1), uv: .init(1,1)),
-            .init(pos: .init( 1, 1), uv: .init(1,0)),
-        ]
-        enc.setVertexBytes(&quad, length: quad.count * MemoryLayout<QuadVertex>.stride, index: 0)
+        // quad_vertex generates positions from [[vertex_id]] — no vertex buffer needed
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
     }
 

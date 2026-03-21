@@ -7,23 +7,26 @@ using namespace metal;
 
 // MARK: - Shared types
 
-// Vertex input — fed via vertex descriptor (attr 0=position, attr 1=texcoord, buffer 0)
-struct VertexIn {
-    float2 position [[attribute(0)]];
-    float2 texcoord [[attribute(1)]];
-};
-
 struct VertexOut {
     float4 position [[position]];
     float2 texcoord;
     float4 color;
 };
 
-// Full-screen quad vertex shader. Requires a vertex descriptor in the pipeline.
-vertex VertexOut quad_vertex(VertexIn in [[stage_in]]) {
+// Full-screen quad vertex shader. Generates positions from vertex_id — no vertex
+// buffer or vertex descriptor needed, so no Metal validation issues at draw time.
+vertex VertexOut quad_vertex(uint vid [[vertex_id]]) {
+    const float2 positions[6] = {
+        float2(-1,-1), float2( 1,-1), float2(-1, 1),
+        float2(-1, 1), float2( 1,-1), float2( 1, 1)
+    };
+    const float2 uvs[6] = {
+        float2(0,1), float2(1,1), float2(0,0),
+        float2(0,0), float2(1,1), float2(1,0)
+    };
     VertexOut out;
-    out.position = float4(in.position, 0.0, 1.0);
-    out.texcoord = in.texcoord;
+    out.position = float4(positions[vid], 0.0, 1.0);
+    out.texcoord = uvs[vid];
     out.color    = float4(1.0);
     return out;
 }
