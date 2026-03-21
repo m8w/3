@@ -347,7 +347,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         enc.setRenderPipelineState(pipeline)
 
         var u = uniforms
-        enc.setFragmentBytes(&u, length: MemoryLayout<MilkDropUniforms>.size, index: 0)
+        enc.setFragmentBytes(&u, length: MemoryLayout<MilkDropUniforms>.stride, index: 0)
         enc.setFragmentTexture(input, index: 0)
 
         // Full-screen quad
@@ -404,7 +404,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         )
 
         enc.setVertexBytes(&positions, length: positions.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
-        enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.size, index: 1)
+        enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
 
         if wave.useDots {
             enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: positions.count)
@@ -464,8 +464,8 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
         var u = uniforms
         enc.setVertexBytes(&positions, length: positions.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
-        enc.setVertexBytes(&su, length: MemoryLayout<ShapeUniforms>.size, index: 1)
-        enc.setVertexBytes(&u, length: MemoryLayout<MilkDropUniforms>.size, index: 2)
+        enc.setVertexBytes(&su, length: MemoryLayout<ShapeUniforms>.stride, index: 1)
+        enc.setVertexBytes(&u, length: MemoryLayout<MilkDropUniforms>.stride, index: 2)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: positions.count)
     }
 
@@ -505,7 +505,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             fractalEnabled: fractalEnabled ? 1 : 0
         )
 
-        enc.setFragmentBytes(&cu, length: MemoryLayout<CompositeUniforms>.size, index: 0)
+        enc.setFragmentBytes(&cu, length: MemoryLayout<CompositeUniforms>.stride, index: 0)
         enc.setFragmentTexture(warp,  index: 0)
         enc.setFragmentTexture(wave,  index: 1)
         enc.setFragmentTexture(shape, index: 2)
@@ -523,7 +523,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         enc.setRenderPipelineState(pipeline)
 
         var u = uniforms
-        enc.setFragmentBytes(&u, length: MemoryLayout<MilkDropUniforms>.size, index: 0)
+        enc.setFragmentBytes(&u, length: MemoryLayout<MilkDropUniforms>.stride, index: 0)
         drawQuad(enc: enc)
         enc.endEncoding()
     }
@@ -544,7 +544,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             time: uniforms.time,
             resolution: uniforms.resolution
         )
-        enc.setFragmentBytes(&bu, length: MemoryLayout<BlendUniforms>.size, index: 0)
+        enc.setFragmentBytes(&bu, length: MemoryLayout<BlendUniforms>.stride, index: 0)
         enc.setFragmentTexture(a, index: 0)
         enc.setFragmentTexture(b, index: 1)
         drawQuad(enc: enc)
