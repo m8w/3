@@ -596,6 +596,8 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         var mutablePreset = preset
         mutablePreset.parseParameters()
         currentPreset = mutablePreset
+        // Run per_frame_init equations and reset q-vars for the new preset
+        evaluator.initPreset(initEquations: mutablePreset.params.perFrameInit, uniforms: &uniforms, audio: audioData)
     }
 
     func beginTransition(to preset: MilkDropPreset, type: Int32 = 0, duration: Float = 2.5) {
@@ -617,70 +619,3 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     }
 }
 
-// MARK: - Equation Evaluator (simplified MilkDrop expression parser)
-
-/// Evaluates per-frame MilkDrop equations that modify visual parameters.
-/// Full implementation would use projectM-eval or a complete expression parser.
-class EquationEvaluator {
-    // Variable table
-    var variables: [String: Double] = [:]
-
-    func evaluate(equations: [String], uniforms: inout MilkDropUniforms, audio: AudioData) {
-        // Seed variables from current uniforms
-        variables["zoom"]   = Double(uniforms.zoom)
-        variables["rot"]    = Double(uniforms.rot)
-        variables["warp"]   = Double(uniforms.warp)
-        variables["cx"]     = Double(uniforms.cx)
-        variables["cy"]     = Double(uniforms.cy)
-        variables["dx"]     = Double(uniforms.dx)
-        variables["dy"]     = Double(uniforms.dy)
-        variables["sx"]     = Double(uniforms.sx)
-        variables["sy"]     = Double(uniforms.sy)
-        variables["decay"]  = Double(uniforms.decay)
-        variables["bass"]   = Double(audio.bass)
-        variables["mid"]    = Double(audio.mid)
-        variables["treble"] = Double(audio.treble)
-        variables["time"]   = Double(uniforms.time)
-        variables["fps"]    = Double(uniforms.fps)
-        variables["frame"]  = Double(uniforms.frame)
-        variables["pi"]     = Double.pi
-        variables["e"]      = M_E
-
-        // Evaluate each equation "var = expr"
-        for eq in equations {
-            guard let eqIdx = eq.firstIndex(of: "=") else { continue }
-            let lhs = String(eq[..<eqIdx]).trimmingCharacters(in: .whitespaces)
-            let rhs = String(eq[eq.index(after: eqIdx)...]).trimmingCharacters(in: .whitespaces)
-            if let value = evaluateExpression(rhs) {
-                variables[lhs] = value
-            }
-        }
-
-        // Write back modified variables to uniforms
-        uniforms.zoom  = Float(variables["zoom"]   ?? Double(uniforms.zoom))
-        uniforms.rot   = Float(variables["rot"]    ?? Double(uniforms.rot))
-        uniforms.warp  = Float(variables["warp"]   ?? Double(uniforms.warp))
-        uniforms.cx    = Float(variables["cx"]     ?? Double(uniforms.cx))
-        uniforms.cy    = Float(variables["cy"]     ?? Double(uniforms.cy))
-        uniforms.dx    = Float(variables["dx"]     ?? Double(uniforms.dx))
-        uniforms.dy    = Float(variables["dy"]     ?? Double(uniforms.dy))
-        uniforms.sx    = Float(variables["sx"]     ?? 1.0)
-        uniforms.sy    = Float(variables["sy"]     ?? 1.0)
-        uniforms.decay = Float(variables["decay"]  ?? Double(uniforms.decay))
-    }
-
-    // Simplified expression evaluator (handles basic MilkDrop math)
-    private func evaluateExpression(_ expr: String) -> Double? {
-        // For production use, integrate projectM-eval library (libns-eel2 / projectM-eval)
-        // This simplified evaluator handles common patterns:
-        //   - Constants: 1.0, 0.5, pi
-        //   - Variables: bass, mid, treble, zoom, etc.
-        //   - Arithmetic: +, -, *, /
-        //   - Functions: sin(), cos(), abs(), sqrt(), pow(), min(), max(), if()
-        let trimmed = expr.trimmingCharacters(in: .whitespaces)
-        if let val = Double(trimmed) { return val }
-        if let val = variables[trimmed] { return val }
-        // For full equation support, integrate: https://github.com/projectM-visualizer/projectm-eval
-        return nil
-    }
-}
