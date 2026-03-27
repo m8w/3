@@ -124,6 +124,16 @@ class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Restart audio engine when source changes
+        $audioSource
+            .dropFirst()
+            .sink { [weak self] source in
+                guard let self else { return }
+                self.audioEngine.stop()
+                self.audioEngine.start(source: source)
+            }
+            .store(in: &cancellables)
+
         // Update auto-switch interval
         $autoSwitchInterval
             .sink { [weak self] _ in self?.setupAutoSwitch() }

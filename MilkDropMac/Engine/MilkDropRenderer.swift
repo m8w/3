@@ -67,6 +67,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
     // Pipeline states
     var warpPipeline:          MTLRenderPipelineState?
+    var meshWarpPipeline:      MTLRenderPipelineState?   // per_vertex mesh warp
     var wavePipeline:          MTLRenderPipelineState?   // alpha blend
     var waveAdditivePipeline:  MTLRenderPipelineState?   // additive blend
     var shapePipeline:         MTLRenderPipelineState?
@@ -120,6 +121,10 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     var liveDecay: Float? = nil
     var liveGamma: Float? = nil
 
+    // FPS reporting
+    var onFPSUpdate: ((Double) -> Void)?
+    private var smoothedFPS: Double = 60
+
     // MARK: - Init
 
     init?(device: MTLDevice) {
@@ -146,6 +151,13 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         warpPipeline = makePipeline(
             vertex: quad,
             fragment: lib.makeFunction(name: "warp_fragment"),
+            pixelFormat: .bgra8Unorm
+        )
+
+        // Mesh warp pipeline (for presets with per_vertex equations)
+        meshWarpPipeline = makePipeline(
+            vertex: lib.makeFunction(name: "mesh_vertex"),
+            fragment: lib.makeFunction(name: "mesh_warp_fragment"),
             pixelFormat: .bgra8Unorm
         )
 
@@ -283,6 +295,11 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         uniforms.frame = Float(frameCount)
         frameCount += 1
 
+        // Smooth FPS and report to caller
+        let instantFPS = dt > 0 ? 1.0 / Double(dt) : 60.0
+        smoothedFPS = smoothedFPS * 0.9 + instantFPS * 0.1
+        onFPSUpdate?(smoothedFPS)
+
         // Update audio data into uniforms
         uniforms.bass     = audioData.bass
         uniforms.mid      = audioData.mid
@@ -318,16 +335,22 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         pingPong.toggle()
 
         // 1. Warp pass: distort previous composite (readTex) → writeTex
-        renderWarpPass(cmd: cmdBuf, input: readTex, output: writeTex)
+        // Use mesh warp when per_vertex equations are present, otherwise full-screen quad
+        let perVertex = currentPreset?.parameters?.perVertex ?? []
+        if perVertex.isEmpty {
+            renderWarpPass(cmd: cmdBuf, input: readTex, output: writeTex)
+        } else {
+            renderMeshWarpPass(cmd: cmdBuf, input: readTex, output: writeTex, equations: perVertex)
+        }
 
         // 2. Wave pass (into waveTexture)
         if let waveTex = waveTexture {
             renderWavePass(cmd: cmdBuf, output: waveTex)
         }
 
-        // 3. Shape pass
+        // 3. Shape pass (writeTex passed so textured shapes can sample the warped frame)
         if let shapeTex = shapeTexture {
-            renderShapePass(cmd: cmdBuf, output: shapeTex)
+            renderShapePass(cmd: cmdBuf, output: shapeTex, warpTex: writeTex)
         }
 
         // 4a. Fractal pass (if enabled) → fractalTexture
@@ -400,6 +423,68 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
         // Full-screen quad
         drawQuad(enc: enc)
+        enc.endEncoding()
+    }
+
+    // Mesh warp pass: evaluates per_vertex equations to build a warped mesh
+    private func renderMeshWarpPass(cmd: MTLCommandBuffer, input: MTLTexture, output: MTLTexture,
+                                    equations: [String]) {
+        guard let pipeline = meshWarpPipeline else {
+            renderWarpPass(cmd: cmd, input: input, output: output)
+            return
+        }
+
+        let meshW = 32, meshH = 24
+        struct MeshVtx { var screenPos: SIMD2<Float>; var sampleUV: SIMD2<Float> }
+
+        // Build vertices: for each grid point compute sample UV via per_vertex equations
+        var vertices = [MeshVtx]()
+        vertices.reserveCapacity(meshW * meshH)
+        for row in 0..<meshH {
+            for col in 0..<meshW {
+                let x = Float(col) / Float(meshW - 1)
+                let y = Float(row) / Float(meshH - 1)
+                let sampleUV = evaluator.evaluateVertex(
+                    equations: equations, x: x, y: y,
+                    uniforms: uniforms, audio: audioData
+                )
+                vertices.append(MeshVtx(screenPos: SIMD2<Float>(x, y), sampleUV: sampleUV))
+            }
+        }
+
+        // Build index buffer (two triangles per quad)
+        var indices = [UInt32]()
+        indices.reserveCapacity((meshW - 1) * (meshH - 1) * 6)
+        for row in 0..<(meshH - 1) {
+            for col in 0..<(meshW - 1) {
+                let tl = UInt32(row * meshW + col)
+                let tr = tl + 1
+                let bl = tl + UInt32(meshW)
+                let br = bl + 1
+                indices += [tl, tr, bl, bl, tr, br]
+            }
+        }
+
+        let desc = makeRenderPassDesc(output)
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { return }
+        enc.setRenderPipelineState(pipeline)
+
+        var u = uniforms
+        enc.setVertexBytes(&vertices, length: vertices.count * MemoryLayout<MeshVtx>.stride, index: 0)
+        enc.setVertexBytes(&u, length: MemoryLayout<MilkDropUniforms>.stride, index: 1)
+        enc.setFragmentTexture(input, index: 0)
+        enc.setFragmentBytes(&u, length: MemoryLayout<MilkDropUniforms>.stride, index: 0)
+
+        guard let indexBuf = device.makeBuffer(bytes: indices,
+                                               length: indices.count * MemoryLayout<UInt32>.stride,
+                                               options: .storageModeShared) else {
+            enc.endEncoding(); return
+        }
+        enc.drawIndexedPrimitives(type: .triangle,
+                                  indexCount: indices.count,
+                                  indexType: .uint32,
+                                  indexBuffer: indexBuf,
+                                  indexBufferOffset: 0)
         enc.endEncoding()
     }
 
@@ -494,13 +579,15 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         }
     }
 
-    private func renderShapePass(cmd: MTLCommandBuffer, output: MTLTexture) {
+    private func renderShapePass(cmd: MTLCommandBuffer, output: MTLTexture, warpTex: MTLTexture) {
         guard let pipeline = shapePipeline,
               let params = currentPreset?.parameters else { return }
 
         let desc = makeRenderPassDesc(output, clear: true, clearColor: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0))
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { return }
         enc.setRenderPipelineState(pipeline)
+        // Bind warp texture once for all textured shapes in this pass
+        enc.setFragmentTexture(warpTex, index: 0)
 
         for shape in params.shapes where shape.enabled {
             var s = shape
@@ -529,12 +616,15 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
         struct ShapeUniforms {
             var color, color2, borderColor: SIMD4<Float>
-            var center: SIMD2<Float>
-            var radius: Float
-            var angle:  Float
-            var sides:  Int32
-            var additive: Int32
+            var center:       SIMD2<Float>
+            var radius:       Float
+            var angle:        Float
+            var sides:        Int32
+            var additive:     Int32
             var thickOutline: Int32
+            var textured:     Int32
+            var tex_ang:      Float
+            var tex_zoom:     Float
         }
         var su = ShapeUniforms(
             color:        SIMD4<Float>(shape.r,  shape.g,  shape.b,  shape.a),
@@ -545,13 +635,17 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             angle:        shape.ang,
             sides:        Int32(sides),
             additive:     shape.additive ? 1 : 0,
-            thickOutline: shape.thickOutline ? 1 : 0
+            thickOutline: shape.thickOutline ? 1 : 0,
+            textured:     shape.textured ? 1 : 0,
+            tex_ang:      shape.tex_ang,
+            tex_zoom:     shape.tex_zoom
         )
 
         var u = uniforms
         enc.setVertexBytes(&positions, length: positions.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
         enc.setVertexBytes(&su, length: MemoryLayout<ShapeUniforms>.stride, index: 1)
         enc.setVertexBytes(&u, length: MemoryLayout<MilkDropUniforms>.stride, index: 2)
+        enc.setFragmentBytes(&su, length: MemoryLayout<ShapeUniforms>.stride, index: 0)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: positions.count)
     }
 

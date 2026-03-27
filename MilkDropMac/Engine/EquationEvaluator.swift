@@ -446,6 +446,54 @@ class EquationEvaluator {
         return result
     }
 
+    // Evaluate per_vertex equations for one mesh vertex.
+    // Returns the UV to sample from the previous frame for that vertex position.
+    func evaluateVertex(equations: [String], x: Float, y: Float,
+                        uniforms: MilkDropUniforms, audio: AudioData) -> SIMD2<Float> {
+        var env = makeBaseEnv(uniforms: uniforms, audio: audio)
+        env.merge(qVars) { _, new in new }
+
+        let xd = Double(x), yd = Double(y)
+        let ucx = env["cx"] ?? 0.5, ucy = env["cy"] ?? 0.5
+        let rad = sqrt((xd - ucx) * (xd - ucx) + (yd - ucy) * (yd - ucy)) * 2
+        let ang = atan2(yd - ucy, xd - ucx)
+        env["x"]   = xd
+        env["y"]   = yd
+        env["rad"] = rad
+        env["ang"] = ang
+
+        for eq in equations {
+            env = runCode(eq, vars: env)
+        }
+
+        // Reconstruct warp transform using (potentially per-vertex modified) params
+        let zoom  = Float(env["zoom"]  ?? Double(uniforms.zoom))
+        let rot   = Float(env["rot"]   ?? Double(uniforms.rot))
+        let warp  = Float(env["warp"]  ?? Double(uniforms.warp))
+        let cx    = Float(env["cx"]    ?? Double(uniforms.cx))
+        let cy    = Float(env["cy"]    ?? Double(uniforms.cy))
+        let dx    = Float(env["dx"]    ?? Double(uniforms.dx))
+        let dy    = Float(env["dy"]    ?? Double(uniforms.dy))
+        let sx    = Float(env["sx"]    ?? Double(uniforms.sx))
+        let sy    = Float(env["sy"]    ?? Double(uniforms.sy))
+        let asp   = uniforms.aspect > 0 ? uniforms.aspect : 1
+
+        // Apply the same warp transform as warp_fragment (replicated in Swift)
+        var uvC = (SIMD2<Float>(x, y) - SIMD2<Float>(cx, cy)) * SIMD2<Float>(asp, 1)
+        uvC /= max(zoom, 0.001)
+        let c = cos(rot), s = sin(rot)
+        uvC = SIMD2<Float>(uvC.x * c - uvC.y * s, uvC.x * s + uvC.y * c)
+        uvC *= SIMD2<Float>(sx, sy)
+        uvC += SIMD2<Float>(dx, dy) * 2
+
+        let t = uniforms.time * uniforms.warpSpeed * 0.5
+        let warpX = sin(t * 1.11 + uvC.y * 3.0) * warp * 0.03
+        let warpY = cos(t * 0.93 + uvC.x * 2.5) * warp * 0.03
+        uvC += SIMD2<Float>(warpX, warpY)
+
+        return uvC / SIMD2<Float>(asp, 1) + SIMD2<Float>(cx, cy)
+    }
+
     // MARK: - Private helpers
 
     private func runCode(_ code: String, vars: [String: Double]) -> [String: Double] {

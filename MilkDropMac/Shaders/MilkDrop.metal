@@ -169,6 +169,9 @@ struct ShapeUniforms {
     int    sides;
     int    additive;
     int    thickOutline;
+    int    textured;        // 1 = sample warp texture
+    float  tex_ang;         // Texture rotation angle
+    float  tex_zoom;        // Texture zoom (1 = normal)
 };
 
 vertex VertexOut shape_vertex(
@@ -180,16 +183,36 @@ vertex VertexOut shape_vertex(
     VertexOut out;
     float2 pos = positions[vid];
     out.position = float4(pos * 2.0 - 1.0, 0, 1);
-    out.texcoord = pos;
+
+    if (shape.textured != 0) {
+        // Compute texture UV: rotate offset from center by tex_ang, scale by tex_zoom
+        float2 offset = pos - shape.center;
+        float c = cos(-shape.tex_ang);
+        float s = sin(-shape.tex_ang);
+        float2 rotated = float2(offset.x * c - offset.y * s,
+                                offset.x * s + offset.y * c);
+        out.texcoord = rotated / max(shape.tex_zoom, 0.001) + 0.5;
+    } else {
+        out.texcoord = pos;
+    }
 
     // Radial gradient: center vs. edge
     float dist = length(pos - shape.center);
-    float t = saturate(dist / shape.radius);
+    float t = saturate(dist / max(shape.radius, 0.0001));
     out.color = mix(shape.color, shape.color2, t);
     return out;
 }
 
-fragment float4 shape_fragment(VertexOut in [[stage_in]]) {
+fragment float4 shape_fragment(
+    VertexOut in                    [[stage_in]],
+    texture2d<float> warpTex        [[texture(0)]],
+    constant ShapeUniforms &shape   [[buffer(0)]]
+) {
+    if (shape.textured != 0) {
+        constexpr sampler s(address::repeat, filter::linear);
+        float4 tex = warpTex.sample(s, in.texcoord);
+        return float4(tex.rgb * in.color.rgb, in.color.a);
+    }
     return in.color;
 }
 
@@ -423,6 +446,38 @@ fragment float4 fractal_stream_fragment(
     float alpha = 0.6 + u.bass * 0.3;
 
     return float4(col * brightness, alpha);
+}
+
+// MARK: - Mesh warp pass (per_vertex equations pre-compute per-vertex sample UVs)
+
+struct MeshVertex {
+    float2 screenPos;   // 0..1 grid position
+    float2 sampleUV;    // Pre-computed UV to sample from previous frame
+};
+
+vertex VertexOut mesh_vertex(
+    uint vid                        [[vertex_id]],
+    constant MeshVertex *vertices   [[buffer(0)]],
+    constant MilkDropUniforms &u    [[buffer(1)]]
+) {
+    MeshVertex v = vertices[vid];
+    VertexOut out;
+    out.position = float4(v.screenPos * 2.0 - 1.0, 0, 1);
+    out.texcoord = v.sampleUV;
+    out.color    = float4(1);
+    return out;
+}
+
+fragment float4 mesh_warp_fragment(
+    VertexOut in                    [[stage_in]],
+    texture2d<float> prev           [[texture(0)]],
+    constant MilkDropUniforms &u    [[buffer(0)]]
+) {
+    constexpr sampler s(address::repeat, filter::linear);
+    float4 color = prev.sample(s, in.texcoord);
+    color.rgb = pow(max(color.rgb, 0.0), float3(u.gamma));
+    color.rgb *= u.decay;
+    return color;
 }
 
 // MARK: - Present pass: copy finalTexture to drawable (avoids blit format constraints)

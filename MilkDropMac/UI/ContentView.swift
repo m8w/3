@@ -160,6 +160,11 @@ struct VisualizerView: NSViewRepresentable {
             let renderer = MilkDropRenderer(device: device)
             view.delegate = renderer
             context.coordinator.renderer = renderer
+            renderer.onFPSUpdate = { fps in
+                Task { @MainActor in
+                    state.currentFPS = fps
+                }
+            }
             Task { @MainActor in
                 state.renderer = renderer
             }
