@@ -40,6 +40,7 @@ struct MilkDropUniforms {
     var sy:                  Float = 1
     var decay:               Float = 0.98
     var gamma:               Float = 1
+    var warpSpeed:           Float = 1
     var videoEchoAlpha:      Float = 0
     var videoEchoZoom:       Float = 1
     var videoEchoOrientation: Int32 = 0
@@ -65,9 +66,10 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     var library: MTLLibrary?
 
     // Pipeline states
-    var warpPipeline:      MTLRenderPipelineState?
-    var wavePipeline:      MTLRenderPipelineState?
-    var shapePipeline:     MTLRenderPipelineState?
+    var warpPipeline:          MTLRenderPipelineState?
+    var wavePipeline:          MTLRenderPipelineState?   // alpha blend
+    var waveAdditivePipeline:  MTLRenderPipelineState?   // additive blend
+    var shapePipeline:         MTLRenderPipelineState?
     var compositePipeline: MTLRenderPipelineState?
     var blendPipeline:     MTLRenderPipelineState?
     var fractalPipeline:   MTLRenderPipelineState?
@@ -141,12 +143,21 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             pixelFormat: .bgra8Unorm
         )
 
-        // Wave pipeline (line rendering — uses its own vertex shader)
+        // Wave pipeline (alpha blend)
         wavePipeline = makePipeline(
             vertex: lib.makeFunction(name: "wave_vertex"),
             fragment: lib.makeFunction(name: "wave_fragment"),
             pixelFormat: .bgra8Unorm,
             blending: true
+        )
+
+        // Wave additive pipeline (src + dst — for wave.additive = true)
+        waveAdditivePipeline = makePipeline(
+            vertex: lib.makeFunction(name: "wave_vertex"),
+            fragment: lib.makeFunction(name: "wave_fragment"),
+            pixelFormat: .bgra8Unorm,
+            blending: true,
+            additive: true
         )
 
         // Shape pipeline
@@ -191,7 +202,8 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         vertex: MTLFunction?,
         fragment: MTLFunction?,
         pixelFormat: MTLPixelFormat,
-        blending: Bool = false
+        blending: Bool = false,
+        additive: Bool = false
     ) -> MTLRenderPipelineState? {
         guard let v = vertex, let f = fragment else { return nil }
         let desc = MTLRenderPipelineDescriptor()
@@ -201,10 +213,17 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         if blending {
             let att = desc.colorAttachments[0]!
             att.isBlendingEnabled = true
-            att.sourceRGBBlendFactor      = .sourceAlpha
-            att.destinationRGBBlendFactor = .oneMinusSourceAlpha
-            att.sourceAlphaBlendFactor    = .one
-            att.destinationAlphaBlendFactor = .zero
+            if additive {
+                att.sourceRGBBlendFactor      = .sourceAlpha
+                att.destinationRGBBlendFactor = .one          // src*alpha + dst
+                att.sourceAlphaBlendFactor    = .one
+                att.destinationAlphaBlendFactor = .one
+            } else {
+                att.sourceRGBBlendFactor      = .sourceAlpha
+                att.destinationRGBBlendFactor = .oneMinusSourceAlpha
+                att.sourceAlphaBlendFactor    = .one
+                att.destinationAlphaBlendFactor = .zero
+            }
         }
         return try? device.makeRenderPipelineState(descriptor: desc)
     }
@@ -385,9 +404,10 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
         let desc = makeRenderPassDesc(output, clear: true, clearColor: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0))
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { return }
-        enc.setRenderPipelineState(pipeline)
 
         for wave in params.waves where wave.enabled {
+            let pipeline = wave.additive ? (waveAdditivePipeline ?? wavePipeline) : wavePipeline
+            if let p = pipeline { enc.setRenderPipelineState(p) }
             renderWave(wave: wave, audioData: audioData, enc: enc)
         }
         enc.endEncoding()
@@ -416,11 +436,17 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             }
             hasPerPointColors = true
         } else {
-            // Default: horizontal waveform sweep
+            // Default: horizontal waveform sweep.
+            // wave.sep splits into two halves offset vertically by sep/512 screen units.
+            let half = sampleCount / 2
+            let sepOffset = Float(wave.sep) / 512.0
             for i in 0..<sampleCount {
-                let t = Float(i) / Float(sampleCount - 1)
+                let t   = Float(i % half) / Float(max(half - 1, 1))
                 let amp = audioData.waveform[i] * wave.scaling
-                positions.append(SIMD2<Float>(t, 0.5 + amp * 0.3))
+                let y   = (i < half)
+                    ? 0.5 - sepOffset + amp * 0.3
+                    : 0.5 + sepOffset + amp * 0.3
+                positions.append(SIMD2<Float>(t, y))
             }
         }
 
@@ -659,6 +685,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         uniforms.sy                 = params.szy
         uniforms.decay              = params.decay
         uniforms.gamma              = params.gamma
+        uniforms.warpSpeed          = params.warpSpeed
         uniforms.videoEchoAlpha     = params.videoEchoAlpha
         uniforms.videoEchoZoom      = params.videoEchoZoom
         uniforms.videoEchoOrientation = Int32(params.videoEchoOrientation)

@@ -60,6 +60,7 @@ struct MilkDropUniforms {
     float sy;
     float decay;
     float gamma;
+    float warpSpeed;
     float videoEchoAlpha;
     float videoEchoZoom;
     int   videoEchoOrientation;
@@ -107,7 +108,7 @@ fragment float4 warp_fragment(
 
     // Warp (psychedelic swirling distortion)
     float warpAmt = u.warp;
-    float t = u.time * u.warp * 0.5;
+    float t = u.time * u.warpSpeed * 0.5;
     float warpX = sin(t * 1.11 + uvCentered.y * 3.0) * warpAmt * 0.03;
     float warpY = cos(t * 0.93 + uvCentered.x * 2.5) * warpAmt * 0.03;
     uvCentered += float2(warpX, warpY);
