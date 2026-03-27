@@ -169,7 +169,7 @@ struct VisualizerView: NSViewRepresentable {
 
     func updateNSView(_ view: MTKView, context: Context) {
         guard let renderer = context.coordinator.renderer else { return }
-        renderer.updateAudio(state.audioEngine.audioData)
+        renderer.updateAudio(state.processedAudio)
         // Only act when the preset actually changes — loadPreset resets q-vars
         if let preset = state.presetManager.currentPreset,
            preset.id != context.coordinator.currentPresetID {

@@ -260,11 +260,19 @@ class AudioEngine: ObservableObject {
 
     private func reduceSpectrum(_ input: [Float], outputBins: Int) -> [Float] {
         var output = [Float](repeating: 0, count: outputBins)
-        let ratio = input.count / outputBins
+        let n = input.count
+        // Skip DC bin (index 0); map [1..n] → log scale across outputBins
+        let logMin = log2(1.0)
+        let logMax = log2(Double(n))
         for i in 0..<outputBins {
-            let start = i * ratio
-            let end = min(start + ratio, input.count)
-            output[i] = input[start..<end].reduce(0, +) / Float(end - start)
+            let lo = pow(2.0, logMin + (logMax - logMin) * Double(i)     / Double(outputBins))
+            let hi = pow(2.0, logMin + (logMax - logMin) * Double(i + 1) / Double(outputBins))
+            let startIdx = max(1, Int(lo))
+            let endIdx   = min(n, Int(ceil(hi)))
+            guard endIdx > startIdx else { output[i] = input[startIdx]; continue }
+            var sum: Float = 0
+            for j in startIdx..<endIdx { sum += input[j] }
+            output[i] = sum / Float(endIdx - startIdx)
         }
         return output
     }

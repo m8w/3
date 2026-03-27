@@ -75,12 +75,16 @@ class AppState: ObservableObject {
     @Published var audioLevel: Double = 0
     @Published var beatStrength: Double = 0
 
+    // Processed audio with sensitivity + band boosts applied — passed to renderer
+    @Published var processedAudio: AudioData = .silence
+
     private var cancellables = Set<AnyCancellable>()
     private var autoSwitchTimer: AnyCancellable?
 
     init() {
         setupBindings()
         setupAutoSwitch()
+        audioEngine.start()
     }
 
     private func setupBindings() {
@@ -97,12 +101,26 @@ class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Forward audio data to beat detector
+        // Apply sensitivity + band boosts, then forward to beat detector and renderer
         audioEngine.$audioData
             .sink { [weak self] data in
-                self?.beatDetector.process(data)
-                self?.audioLevel = Double(data.rms)
-                self?.beatStrength = Double(data.bassLevel)
+                guard let self else { return }
+                let sens = Float(self.audioSensitivity)
+                let bB   = Float(self.bassBoost)
+                let mB   = Float(self.midBoost)
+                let tB   = Float(self.trebleBoost)
+                var d = data
+                d.bass     = min(d.bass   * sens * bB, 2.0)
+                d.mid      = min(d.mid    * sens * mB, 2.0)
+                d.treble   = min(d.treble * sens * tB, 2.0)
+                d.rms      = min(d.rms    * sens,      2.0)
+                d.bassLevel = min(d.bassLevel * sens * bB, 1.0)
+                d.bassAttn  = min(d.bassAttn  * sens * bB, 1.0)
+                d.spectrum  = d.spectrum.map { min($0 * sens, 2.0) }
+                self.processedAudio = d
+                self.beatDetector.process(d)
+                self.audioLevel   = Double(d.rms)
+                self.beatStrength = Double(d.bassLevel)
             }
             .store(in: &cancellables)
 

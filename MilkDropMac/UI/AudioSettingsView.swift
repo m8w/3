@@ -127,7 +127,7 @@ struct SpectrumMiniView: View {
     var body: some View {
         GeometryReader { _ in
             Canvas { ctx, size in
-                let spectrum  = state.audioEngine.audioData.spectrum
+                let spectrum  = state.processedAudio.spectrum
                 let barCount  = min(64, spectrum.count)
                 guard barCount > 0 else { return }
                 let barW = size.width / CGFloat(barCount)
