@@ -128,25 +128,27 @@ fragment float4 warp_fragment(
 // MARK: - Wave rendering
 
 struct WaveUniforms {
-    float4 color;         // RGBA
+    float4 color;         // RGBA — used when perPointColors == 0
     float  thickness;
     int    drawThick;
     int    additive;
     int    useDots;
     float  smoothing;
-    int    sampleCount;   // How many waveform points
+    int    sampleCount;
+    int    perPointColors;  // 1 = use per-vertex color buffer, 0 = use uniform color
 };
 
 vertex VertexOut wave_vertex(
     uint vid                        [[vertex_id]],
     constant float2 *positions      [[buffer(0)]],
-    constant WaveUniforms &wave     [[buffer(1)]]
+    constant WaveUniforms &wave     [[buffer(1)]],
+    constant float4 *colors         [[buffer(2)]]   // per-vertex colors (may be unused)
 ) {
     VertexOut out;
     float2 pos = positions[vid];
     out.position = float4(pos * 2.0 - 1.0, 0, 1);
     out.texcoord = pos;
-    out.color    = wave.color;
+    out.color    = wave.perPointColors != 0 ? colors[vid] : wave.color;
     return out;
 }
 

@@ -170,7 +170,10 @@ struct VisualizerView: NSViewRepresentable {
     func updateNSView(_ view: MTKView, context: Context) {
         guard let renderer = context.coordinator.renderer else { return }
         renderer.updateAudio(state.audioEngine.audioData)
-        if let preset = state.presetManager.currentPreset {
+        // Only call loadPreset when the preset actually changes — it resets q-vars
+        if let preset = state.presetManager.currentPreset,
+           preset.id != context.coordinator.currentPresetID {
+            context.coordinator.currentPresetID = preset.id
             renderer.loadPreset(preset)
         }
         renderer.setSyphonEnabled(state.syphonEnabled)
@@ -185,6 +188,7 @@ struct VisualizerView: NSViewRepresentable {
 
     class Coordinator {
         var renderer: MilkDropRenderer?
+        var currentPresetID: UUID?
     }
 }
 

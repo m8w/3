@@ -375,7 +375,10 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         guard sampleCount > 1 else { return }
 
         // Build vertex array — use per-point equations if the wave defines them
-        var positions = [SIMD2<Float>]()
+        var positions  = [SIMD2<Float>]()
+        var colors     = [SIMD4<Float>]()
+        var hasPerPointColors = false
+
         if !wave.perPoint.isEmpty {
             let pts = evaluator.evaluateWavePoints(
                 equations: wave.perPoint,
@@ -384,7 +387,11 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
                 audio: audioData,
                 sampleCount: sampleCount
             )
-            for pt in pts { positions.append(SIMD2<Float>(pt.x, pt.y)) }
+            for pt in pts {
+                positions.append(SIMD2<Float>(pt.x, pt.y))
+                colors.append(SIMD4<Float>(pt.r, pt.g, pt.b, pt.a))
+            }
+            hasPerPointColors = true
         } else {
             // Default: horizontal waveform sweep
             for i in 0..<sampleCount {
@@ -395,26 +402,35 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         }
 
         struct WaveUniforms {
-            var color:       SIMD4<Float>
-            var thickness:   Float
-            var drawThick:   Int32
-            var additive:    Int32
-            var useDots:     Int32
-            var smoothing:   Float
-            var sampleCount: Int32
+            var color:           SIMD4<Float>
+            var thickness:       Float
+            var drawThick:       Int32
+            var additive:        Int32
+            var useDots:         Int32
+            var smoothing:       Float
+            var sampleCount:     Int32
+            var perPointColors:  Int32
         }
         var wu = WaveUniforms(
-            color:       SIMD4<Float>(wave.r, wave.g, wave.b, wave.a),
-            thickness:   wave.drawThick ? 2.0 : 1.0,
-            drawThick:   wave.drawThick ? 1 : 0,
-            additive:    wave.additive ? 1 : 0,
-            useDots:     wave.useDots ? 1 : 0,
-            smoothing:   wave.smoothing,
-            sampleCount: Int32(sampleCount)
+            color:          SIMD4<Float>(wave.r, wave.g, wave.b, wave.a),
+            thickness:      wave.drawThick ? 2.0 : 1.0,
+            drawThick:      wave.drawThick ? 1 : 0,
+            additive:       wave.additive ? 1 : 0,
+            useDots:        wave.useDots ? 1 : 0,
+            smoothing:      wave.smoothing,
+            sampleCount:    Int32(sampleCount),
+            perPointColors: hasPerPointColors ? 1 : 0
         )
 
         enc.setVertexBytes(&positions, length: positions.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
         enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
+        // Always bind a color buffer at index 2; use dummy entry when not using per-point colors
+        if hasPerPointColors {
+            enc.setVertexBytes(&colors, length: colors.count * MemoryLayout<SIMD4<Float>>.stride, index: 2)
+        } else {
+            var dummy = SIMD4<Float>(wave.r, wave.g, wave.b, wave.a)
+            enc.setVertexBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
+        }
 
         if wave.useDots {
             enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: positions.count)
