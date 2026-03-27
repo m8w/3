@@ -44,6 +44,16 @@ class AppState: ObservableObject {
     @Published var brightness: Double = 1.0
     @Published var gamma: Double = 1.0
 
+    // MARK: - Live param overrides (QuickEditor → renderer, applied after equations)
+    @Published var liveZoom:  Float? = nil
+    @Published var liveWarp:  Float? = nil
+    @Published var liveDecay: Float? = nil
+    @Published var liveGamma: Float? = nil
+
+    func clearLiveOverrides() {
+        liveZoom = nil; liveWarp = nil; liveDecay = nil; liveGamma = nil
+    }
+
     // MARK: - Audio settings
     @Published var audioSource: AudioSource = .systemDefault
     @Published var audioSensitivity: Double = 1.0

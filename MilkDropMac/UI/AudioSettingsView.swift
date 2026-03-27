@@ -125,33 +125,33 @@ struct SpectrumMiniView: View {
     @EnvironmentObject var state: AppState
 
     var body: some View {
-        GeometryReader { geo in
+        GeometryReader { _ in
             Canvas { ctx, size in
-                // Bass indicator
-                let bassH = size.height * CGFloat(state.audioLevel) * 2
-                ctx.fill(
-                    Path(CGRect(x: 0, y: size.height - bassH, width: 16, height: bassH)),
-                    with: .color(.red.opacity(0.7))
-                )
-                // Beat flash
-                if state.beatStrength > 0.8 {
+                let spectrum  = state.audioEngine.audioData.spectrum
+                let barCount  = min(64, spectrum.count)
+                guard barCount > 0 else { return }
+                let barW = size.width / CGFloat(barCount)
+
+                for i in 0..<barCount {
+                    let level = Double(spectrum[i]).clamped(to: 0...1)
+                    let barH  = size.height * CGFloat(level)
+                    let x     = CGFloat(i) * barW
+                    let hue   = 0.5 + Double(i) / Double(barCount) * 0.35
                     ctx.fill(
-                        Path(CGRect(x: 0, y: 0, width: size.width, height: size.height)),
-                        with: .color(.white.opacity(0.05))
+                        Path(CGRect(x: x + 1, y: size.height - barH,
+                                    width: barW - 2, height: barH)),
+                        with: .color(
+                            Color(hue: hue, saturation: 0.9,
+                                  brightness: 0.85 + level * 0.15).opacity(0.85)
+                        )
                     )
                 }
 
-                // Placeholder spectrum bars
-                let barCount = 48
-                let barW = (size.width - 20) / CGFloat(barCount)
-                for i in 0..<barCount {
-                    let level = state.audioLevel * (sin(Double(i) * 0.4) * 0.4 + 0.6)
-                    let barH = size.height * CGFloat(level) * 0.9
-                    let x = 20 + CGFloat(i) * barW
-                    let hue = Double(i) / Double(barCount) * 0.35 + 0.5  // cyan → green
+                // Beat flash
+                if state.beatStrength > 0.7 {
                     ctx.fill(
-                        Path(CGRect(x: x + 1, y: size.height - barH, width: barW - 2, height: barH)),
-                        with: .color(Color(hue: hue, saturation: 0.9, brightness: 0.9).opacity(0.8))
+                        Path(CGRect(x: 0, y: 0, width: size.width, height: size.height)),
+                        with: .color(.white.opacity((state.beatStrength - 0.7) * 0.25))
                     )
                 }
             }

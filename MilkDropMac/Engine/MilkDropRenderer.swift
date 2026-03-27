@@ -114,6 +114,12 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     // Audio data
     var audioData: AudioData = .silence
 
+    // Live param overrides — set by QuickEditor, applied after per-frame equations
+    var liveZoom:  Float? = nil
+    var liveWarp:  Float? = nil
+    var liveDecay: Float? = nil
+    var liveGamma: Float? = nil
+
     // MARK: - Init
 
     init?(device: MTLDevice) {
@@ -692,6 +698,12 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
         // Evaluate per-frame equations (modifies uniforms via evaluator)
         evaluator.evaluate(equations: params.perFrame, uniforms: &uniforms, audio: audioData)
+
+        // Apply live overrides from QuickEditor — these win over equations
+        if let v = liveZoom  { uniforms.zoom  = v }
+        if let v = liveWarp  { uniforms.warp  = v }
+        if let v = liveDecay { uniforms.decay = v }
+        if let v = liveGamma { uniforms.gamma = v }
     }
 
     // MARK: - Helpers

@@ -80,12 +80,12 @@ struct MorphingView: View {
 
                 // MARK: - Transition Settings
                 ParameterSection(title: "Transition Settings") {
-                    ParamSlider(label: "Duration", value: Binding(
+                    ParamSlider(label: "Duration (s)", value: Binding(
                         get: { Float(state.transitionDuration) },
                         set: { state.transitionDuration = Double($0) }
                     ), range: 0.5...8.0)
 
-                    ParamSlider(label: "Auto Switch", value: Binding(
+                    ParamSlider(label: "Auto Switch (s)", value: Binding(
                         get: { Float(state.autoSwitchInterval) },
                         set: { state.autoSwitchInterval = Double($0) }
                     ), range: 5...120)

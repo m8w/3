@@ -174,6 +174,7 @@ struct VisualizerView: NSViewRepresentable {
         if let preset = state.presetManager.currentPreset,
            preset.id != context.coordinator.currentPresetID {
             context.coordinator.currentPresetID = preset.id
+            state.clearLiveOverrides()
             switch state.presetManager.pendingTransition {
             case .smooth:
                 renderer.beginTransition(
@@ -189,6 +190,10 @@ struct VisualizerView: NSViewRepresentable {
         renderer.fractalEnabled = state.fractalStreamEnabled
         renderer.fractalBlend   = Float(state.fractalBlend)
         renderer.transitionType = state.morphingTechnique
+        renderer.liveZoom  = state.liveZoom
+        renderer.liveWarp  = state.liveWarp
+        renderer.liveDecay = state.liveDecay
+        renderer.liveGamma = state.liveGamma
     }
 
     func makeCoordinator() -> Coordinator {

@@ -158,16 +158,35 @@ struct QuickEditorView: View {
 
                 Divider().background(Color(hex: "2a2a2a"))
 
-                // Quick sliders for current preset
+                // Live sliders — override renderer uniforms immediately each frame
                 ScrollView {
                     VStack(spacing: 0) {
                         ParameterSection(title: "Quick Adjust") {
-                            if let params = state.presetManager.currentPreset?.parameters {
-                                ParamSlider(label: "Zoom",  value: .constant(params.zoomAmount),  range: 0.1...5)
-                                ParamSlider(label: "Warp",  value: .constant(params.warpScale),   range: 0...10)
-                                ParamSlider(label: "Decay", value: .constant(params.decay),       range: 0.8...1.0)
-                                ParamSlider(label: "Gamma", value: .constant(params.gamma),       range: 0.1...3)
-                            }
+                            let params = state.presetManager.currentPreset?.parameters
+                            ParamSlider(label: "Zoom", value: Binding(
+                                get: { state.liveZoom  ?? params?.zoomAmount ?? 1.0 },
+                                set: { state.liveZoom  = $0 }
+                            ), range: 0.1...5)
+                            ParamSlider(label: "Warp", value: Binding(
+                                get: { state.liveWarp  ?? params?.warpScale  ?? 1.0 },
+                                set: { state.liveWarp  = $0 }
+                            ), range: 0...10)
+                            ParamSlider(label: "Decay", value: Binding(
+                                get: { state.liveDecay ?? params?.decay       ?? 0.98 },
+                                set: { state.liveDecay = $0 }
+                            ), range: 0.5...1.0)
+                            ParamSlider(label: "Gamma", value: Binding(
+                                get: { state.liveGamma ?? params?.gamma       ?? 1.0 },
+                                set: { state.liveGamma = $0 }
+                            ), range: 0.1...3)
+                        }
+                        if state.liveZoom != nil || state.liveWarp != nil ||
+                           state.liveDecay != nil || state.liveGamma != nil {
+                            Button("Reset to Preset Values") { state.clearLiveOverrides() }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 11))
+                                .foregroundColor(.orange)
+                                .padding(.vertical, 8)
                         }
                     }
                 }
