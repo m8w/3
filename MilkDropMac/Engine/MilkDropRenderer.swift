@@ -106,6 +106,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
     // Timing
     var startTime: CFTimeInterval = CACurrentMediaTime()
+    var lastFrameTime: CFTimeInterval = CACurrentMediaTime()
     var frameCount: Int = 0
 
     // Audio data
@@ -251,16 +252,34 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
               let cmdBuf = commandQueue.makeCommandBuffer() else { return }
 
         let now = CACurrentMediaTime()
+        let dt  = Float(now - lastFrameTime)
+        lastFrameTime = now
         uniforms.time  = Float(now - startTime)
         uniforms.frame = Float(frameCount)
         frameCount += 1
 
         // Update audio data into uniforms
-        uniforms.bass    = audioData.bass
-        uniforms.mid     = audioData.mid
-        uniforms.treble  = audioData.treble
-        uniforms.vol     = audioData.rms
+        uniforms.bass     = audioData.bass
+        uniforms.mid      = audioData.mid
+        uniforms.treble   = audioData.treble
+        uniforms.vol      = audioData.rms
         uniforms.bass_att = audioData.bassAttn
+
+        // Advance transition progress
+        if isTransitioning {
+            transitionProgress += dt / max(transitionDuration, 0.001)
+            if transitionProgress >= 1.0 {
+                // Transition complete — commit incoming preset as current
+                transitionProgress = 0
+                isTransitioning    = false
+                if let next = nextPreset {
+                    currentPreset = next
+                    evaluator.initPreset(initEquations: next.params.perFrameInit,
+                                         uniforms: &uniforms, audio: audioData)
+                }
+                nextPreset = nil
+            }
+        }
 
         // Evaluate per-frame equations from current preset
         if let preset = currentPreset {
@@ -292,20 +311,24 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         }
 
         // 4b. Composite pass: warp + waves + shapes → readTex
-        // readTex is safe to write now (warp is done reading it).
-        // Writing back to readTex completes the feedback loop:
-        // next frame the warp will distort this full composite.
-        let waveTex   = waveTexture
-        let shapeTex  = shapeTexture
+        let waveTex  = waveTexture
+        let shapeTex = shapeTexture
         if let w = waveTex, let s = shapeTex {
             renderCompositePass(cmd: cmdBuf, warp: writeTex, wave: w, shape: s, output: readTex)
         }
 
-        // 5. Transition blend (if active)
+        // 5. Transition blend (if active): capture outgoing into txA, render incoming into txB
         var finalTexture: MTLTexture = readTex
         if isTransitioning,
            let txA = transitionTextureA, let txB = transitionTextureB,
            let blendOut = outputTexture {
+            // txA = current outgoing frame (copy readTex)
+            renderCopy(cmd: cmdBuf, src: readTex, dst: txA)
+            // txB = incoming preset rendered independently
+            if let next = nextPreset {
+                renderNextPreset(next, cmd: cmdBuf, output: txB)
+            }
+            uniforms.progress = transitionProgress
             renderBlendPass(cmd: cmdBuf, a: txA, b: txB, output: blendOut)
             finalTexture = blendOut
         }
@@ -582,20 +605,63 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         enc.endEncoding()
     }
 
+    // MARK: - Helpers for transitions
+
+    // Copy src texture into dst (used to snapshot the outgoing frame)
+    private func renderCopy(cmd: MTLCommandBuffer, src: MTLTexture, dst: MTLTexture) {
+        guard let pipeline = copyPipeline else { return }
+        let desc = makeRenderPassDesc(dst)
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { return }
+        enc.setRenderPipelineState(pipeline)
+        enc.setFragmentTexture(src, index: 0)
+        drawQuad(enc: enc)
+        enc.endEncoding()
+    }
+
+    // Render the incoming preset into a standalone texture (no feedback loop — single clear frame)
+    private func renderNextPreset(_ preset: MilkDropPreset, cmd: MTLCommandBuffer, output: MTLTexture) {
+        guard let params = preset.parameters,
+              let waveTex = waveTexture, let shapeTex = shapeTexture else { return }
+
+        // Snapshot uniforms so we don't disturb the current preset's state
+        var nextUniforms = uniforms
+        nextUniforms.zoom  = params.zoomAmount
+        nextUniforms.rot   = params.rotatAmount
+        nextUniforms.warp  = params.warpScale
+        nextUniforms.cx    = params.centreX
+        nextUniforms.cy    = params.centreY
+        nextUniforms.sx    = params.szx
+        nextUniforms.sy    = params.szy
+        nextUniforms.decay = params.decay
+        nextUniforms.gamma = params.gamma
+
+        // Render: clear output with black then composite waves+shapes over it
+        let clearDesc = makeRenderPassDesc(output, clear: true)
+        if let enc = cmd.makeRenderCommandEncoder(descriptor: clearDesc) {
+            enc.endEncoding()
+        }
+        renderCompositePass(cmd: cmd, warp: output, wave: waveTex, shape: shapeTex, output: output)
+    }
+
     // MARK: - Equation evaluation
 
     private func evaluatePreset(_ preset: MilkDropPreset) {
         guard let params = preset.parameters else { return }
-        // Copy static params into uniforms
-        uniforms.zoom  = params.zoomAmount
-        uniforms.rot   = params.rotatAmount
-        uniforms.warp  = params.warpScale
-        uniforms.cx    = params.centreX
-        uniforms.cy    = params.centreY
-        uniforms.sx    = params.szx
-        uniforms.sy    = params.szy
-        uniforms.decay = params.decay
-        uniforms.gamma = params.gamma
+        // Seed static params into uniforms (equations may override these)
+        uniforms.zoom               = params.zoomAmount
+        uniforms.rot                = params.rotatAmount
+        uniforms.warp               = params.warpScale
+        uniforms.cx                 = params.centreX
+        uniforms.cy                 = params.centreY
+        uniforms.dx                 = params.warpX
+        uniforms.dy                 = params.warpY
+        uniforms.sx                 = params.szx
+        uniforms.sy                 = params.szy
+        uniforms.decay              = params.decay
+        uniforms.gamma              = params.gamma
+        uniforms.videoEchoAlpha     = params.videoEchoAlpha
+        uniforms.videoEchoZoom      = params.videoEchoZoom
+        uniforms.videoEchoOrientation = Int32(params.videoEchoOrientation)
 
         // Evaluate per-frame equations (modifies uniforms via evaluator)
         evaluator.evaluate(equations: params.perFrame, uniforms: &uniforms, audio: audioData)

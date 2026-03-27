@@ -170,11 +170,20 @@ struct VisualizerView: NSViewRepresentable {
     func updateNSView(_ view: MTKView, context: Context) {
         guard let renderer = context.coordinator.renderer else { return }
         renderer.updateAudio(state.audioEngine.audioData)
-        // Only call loadPreset when the preset actually changes — it resets q-vars
+        // Only act when the preset actually changes — loadPreset resets q-vars
         if let preset = state.presetManager.currentPreset,
            preset.id != context.coordinator.currentPresetID {
             context.coordinator.currentPresetID = preset.id
-            renderer.loadPreset(preset)
+            switch state.presetManager.pendingTransition {
+            case .smooth:
+                renderer.beginTransition(
+                    to: preset,
+                    type: state.morphingTechnique,
+                    duration: Float(state.transitionDuration)
+                )
+            case .hardcut, .instant:
+                renderer.loadPreset(preset)
+            }
         }
         renderer.setSyphonEnabled(state.syphonEnabled)
         renderer.fractalEnabled = state.fractalStreamEnabled
