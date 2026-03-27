@@ -417,18 +417,18 @@ class EquationEvaluator {
         for idx in 0..<sampleCount {
             let t = sampleCount > 1 ? Double(idx) / Double(sampleCount - 1) : 0
             var env = baseEnv
-            env["i"]  = t
-            env["x"]  = Double(wave.x) + (t - 0.5)
-            env["y"]  = Double(wave.y)
-            env["r"]  = Double(wave.r)
-            env["g"]  = Double(wave.g)
-            env["b"]  = Double(wave.b)
-            env["a"]  = Double(wave.a)
-            // Sample from waveform/spectrum
             let sIdx = min(idx, audio.waveform.count - 1)
-            env["sample"] = Double(idx < audio.waveform.count ? audio.waveform[sIdx] : 0)
-            env["value1"] = env["sample"]!
-            env["value2"] = Double(idx < audio.spectrum.count ? audio.spectrum[sIdx] : 0)
+            let sampleVal = idx < audio.waveform.count ? Double(audio.waveform[sIdx]) : 0
+            env["i"]      = t
+            env["x"]      = t   // default: left→right sweep 0..1
+            env["y"]      = 0.5 + sampleVal * Double(wave.scaling) * 0.3
+            env["r"]      = Double(wave.r)
+            env["g"]      = Double(wave.g)
+            env["b"]      = Double(wave.b)
+            env["a"]      = Double(wave.a)
+            env["sample"] = sampleVal
+            env["value1"] = sampleVal
+            env["value2"] = idx < audio.spectrum.count ? Double(audio.spectrum[sIdx]) : 0
 
             for eq in equations {
                 env = runCode(eq, vars: env)

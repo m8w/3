@@ -374,14 +374,24 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         let sampleCount = min(wave.samples, audioData.waveform.count)
         guard sampleCount > 1 else { return }
 
-        // Build vertex array
+        // Build vertex array — use per-point equations if the wave defines them
         var positions = [SIMD2<Float>]()
-        for i in 0..<sampleCount {
-            let t = Float(i) / Float(sampleCount - 1)
-            let amp = audioData.waveform[i] * wave.scaling
-            let x = t
-            let y = 0.5 + amp * 0.3
-            positions.append(SIMD2<Float>(x, y))
+        if !wave.perPoint.isEmpty {
+            let pts = evaluator.evaluateWavePoints(
+                equations: wave.perPoint,
+                wave: wave,
+                uniforms: uniforms,
+                audio: audioData,
+                sampleCount: sampleCount
+            )
+            for pt in pts { positions.append(SIMD2<Float>(pt.x, pt.y)) }
+        } else {
+            // Default: horizontal waveform sweep
+            for i in 0..<sampleCount {
+                let t = Float(i) / Float(sampleCount - 1)
+                let amp = audioData.waveform[i] * wave.scaling
+                positions.append(SIMD2<Float>(t, 0.5 + amp * 0.3))
+            }
         }
 
         struct WaveUniforms {
@@ -422,7 +432,12 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         enc.setRenderPipelineState(pipeline)
 
         for shape in params.shapes where shape.enabled {
-            renderShape(shape: shape, enc: enc)
+            var s = shape
+            if !s.perFrame.isEmpty {
+                evaluator.evaluateShape(equations: s.perFrame, shape: &s,
+                                        uniforms: uniforms, audio: audioData)
+            }
+            renderShape(shape: s, enc: enc)
         }
         enc.endEncoding()
     }
