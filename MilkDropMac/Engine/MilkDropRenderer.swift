@@ -494,7 +494,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     }
 
     private func renderWavePass(cmd: MTLCommandBuffer, output: MTLTexture) {
-        guard let pipeline = wavePipeline,
+        guard wavePipeline != nil,
               let preset = currentPreset,
               let params = preset.parameters else { return }
 

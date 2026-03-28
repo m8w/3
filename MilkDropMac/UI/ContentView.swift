@@ -161,7 +161,7 @@ struct VisualizerView: NSViewRepresentable {
             view.delegate = renderer
             context.coordinator.renderer = renderer
             renderer?.onFPSUpdate = { fps in
-                Task { @MainActor in
+                DispatchQueue.main.async {
                     state.currentFPS = fps
                 }
             }
