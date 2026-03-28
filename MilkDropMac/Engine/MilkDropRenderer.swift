@@ -497,8 +497,8 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { return }
 
         for wave in params.waves where wave.enabled {
-            let pipeline = wave.additive ? (waveAdditivePipeline ?? wavePipeline) : wavePipeline
-            if let p = pipeline { enc.setRenderPipelineState(p) }
+            let wavePipe = wave.additive ? (waveAdditivePipeline ?? wavePipeline) : wavePipeline
+            if let p = wavePipe { enc.setRenderPipelineState(p) }
             renderWave(wave: wave, audioData: audioData, enc: enc)
         }
         enc.endEncoding()
