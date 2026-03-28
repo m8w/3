@@ -316,7 +316,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
                 isTransitioning    = false
                 if let next = nextPreset {
                     currentPreset = next
-                    evaluator.initPreset(initEquations: next.params.perFrameInit,
+                    evaluator.initPreset(initEquations: next.parameters?.perFrameInit ?? "",
                                          uniforms: &uniforms, audio: audioData)
                 }
                 nextPreset = nil
@@ -827,7 +827,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         mutablePreset.parseParameters()
         currentPreset = mutablePreset
         // Run per_frame_init equations and reset q-vars for the new preset
-        evaluator.initPreset(initEquations: mutablePreset.params.perFrameInit, uniforms: &uniforms, audio: audioData)
+        evaluator.initPreset(initEquations: mutablePreset.parameters?.perFrameInit ?? "", uniforms: &uniforms, audio: audioData)
     }
 
     func beginTransition(to preset: MilkDropPreset, type: Int32 = 0, duration: Float = 2.5) {
