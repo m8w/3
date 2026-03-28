@@ -470,7 +470,12 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         enc.setRenderPipelineState(pipeline)
 
         var u = uniforms
-        enc.setVertexBytes(&vertices, length: vertices.count * MemoryLayout<MeshVtx>.stride, index: 0)
+        guard let vertexBuf = device.makeBuffer(bytes: &vertices,
+                                                length: vertices.count * MemoryLayout<MeshVtx>.stride,
+                                                options: .storageModeShared) else {
+            enc.endEncoding(); return
+        }
+        enc.setVertexBuffer(vertexBuf, offset: 0, index: 0)
         enc.setVertexBytes(&u, length: MemoryLayout<MilkDropUniforms>.stride, index: 1)
         enc.setFragmentTexture(input, index: 0)
         enc.setFragmentBytes(&u, length: MemoryLayout<MilkDropUniforms>.stride, index: 0)
