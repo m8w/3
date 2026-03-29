@@ -101,8 +101,12 @@ class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Apply sensitivity + band boosts, then forward to beat detector and renderer
+        // Apply sensitivity + band boosts, then forward to beat detector and renderer.
+        // receive(on: DispatchQueue.main) adds an async hop so the sink fires on the
+        // NEXT main-queue drain — never inside a SwiftUI view-update pass, which would
+        // cause the "Publishing from within view updates" warning storm.
         audioEngine.$audioData
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] data in
                 guard let self else { return }
                 let sens = Float(self.audioSensitivity)
