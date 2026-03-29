@@ -500,19 +500,54 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     }
 
     private func renderWavePass(cmd: MTLCommandBuffer, output: MTLTexture) {
-        guard wavePipeline != nil,
-              let preset = currentPreset,
-              let params = preset.parameters else { return }
+        guard let wavePipe = wavePipeline else { return }
 
         let desc = makeRenderPassDesc(output, clear: true, clearColor: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0))
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { return }
 
-        for wave in params.waves where wave.enabled {
-            let wavePipe = wave.additive ? (waveAdditivePipeline ?? wavePipeline) : wavePipeline
-            if let p = wavePipe { enc.setRenderPipelineState(p) }
-            renderWave(wave: wave, audioData: audioData, enc: enc)
+        let enabledWaves = currentPreset?.parameters?.waves.filter { $0.enabled } ?? []
+
+        if enabledWaves.isEmpty {
+            // No preset waves — draw a bright fallback waveform so the feedback loop
+            // always has visual content to work with regardless of preset.
+            enc.setRenderPipelineState(wavePipe)
+            renderFallbackWave(enc: enc)
+        } else {
+            for wave in enabledWaves {
+                let pipe = wave.additive ? (waveAdditivePipeline ?? wavePipe) : wavePipe
+                enc.setRenderPipelineState(pipe)
+                renderWave(wave: wave, audioData: audioData, enc: enc)
+            }
         }
         enc.endEncoding()
+    }
+
+    // A simple bright waveform drawn when the preset has no waves defined.
+    private func renderFallbackWave(enc: MTLRenderCommandEncoder) {
+        let count = min(512, audioData.waveform.count)
+        guard count > 1 else { return }
+        var positions = [SIMD2<Float>]()
+        positions.reserveCapacity(count)
+        for i in 0..<count {
+            let t   = Float(i) / Float(count - 1)
+            let amp = audioData.waveform[i]
+            positions.append(SIMD2<Float>(t, 0.5 + amp * 0.35))
+        }
+        struct WaveUniforms {
+            var color: SIMD4<Float>; var thickness: Float
+            var drawThick: Int32; var additive: Int32; var useDots: Int32
+            var smoothing: Float; var sampleCount: Int32; var perPointColors: Int32
+        }
+        var wu = WaveUniforms(
+            color: SIMD4<Float>(0.4, 0.8, 1.0, 0.9), thickness: 1.5,
+            drawThick: 0, additive: 0, useDots: 0,
+            smoothing: 0.4, sampleCount: Int32(count), perPointColors: 0
+        )
+        var dummy = SIMD4<Float>(0.4, 0.8, 1.0, 0.9)
+        enc.setVertexBytes(&positions, length: positions.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
+        enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
+        enc.setVertexBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
+        enc.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: positions.count)
     }
 
     private func renderWave(wave: PresetWave, audioData: AudioData, enc: MTLRenderCommandEncoder) {
@@ -857,7 +892,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             desc.colorAttachments[0].texture     = tex
             desc.colorAttachments[0].loadAction  = .clear
             desc.colorAttachments[0].storeAction = .store
-            desc.colorAttachments[0].clearColor  = MTLClearColor(red: 0.04, green: 0.02, blue: 0.06, alpha: 1)
+            desc.colorAttachments[0].clearColor  = MTLClearColor(red: 0.15, green: 0.05, blue: 0.25, alpha: 1)
             guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { continue }
             enc.endEncoding()
         }
