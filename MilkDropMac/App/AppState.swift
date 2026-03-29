@@ -88,9 +88,20 @@ class AppState: ObservableObject {
     }
 
     private func setupBindings() {
-        // Forward PresetManager changes to AppState so views re-render
+        // Forward PresetManager changes to AppState so views re-render.
+        // receive(on: RunLoop.main) defers the send to the next run-loop cycle so it
+        // never fires synchronously inside a SwiftUI view-update pass.
         presetManager.objectWillChange
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
+        // Clear live param overrides whenever the preset changes.
+        // Doing this here (in a Combine chain) rather than in updateNSView avoids
+        // setting @Published properties during SwiftUI's view-update pass.
+        presetManager.$currentPreset
+            .dropFirst()
+            .sink { [weak self] _ in self?.clearLiveOverrides() }
             .store(in: &cancellables)
 
         // Connect beat detector to preset switching
@@ -103,10 +114,11 @@ class AppState: ObservableObject {
 
         // Apply sensitivity + band boosts, then forward to beat detector and renderer.
         // Throttle to 30 Hz: audio fires at ~90 Hz but SwiftUI only needs updates at
-        // display rate or lower. receive(on:) + throttle ensure @Published setters never
-        // fire inside a SwiftUI view-update pass.
+        // display rate or lower. RunLoop.main (not DispatchQueue.main) always defers to
+        // the next run-loop cycle, ensuring @Published setters never fire synchronously
+        // inside a SwiftUI view-update pass.
         audioEngine.$audioData
-            .throttle(for: .milliseconds(33), scheduler: DispatchQueue.main, latest: true)
+            .throttle(for: .milliseconds(33), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] data in
                 guard let self else { return }
                 let sens = Float(self.audioSensitivity)

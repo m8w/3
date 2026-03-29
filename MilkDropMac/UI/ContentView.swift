@@ -189,7 +189,8 @@ struct VisualizerView: NSViewRepresentable {
         if let preset = state.presetManager.currentPreset,
            preset.id != context.coordinator.currentPresetID {
             context.coordinator.currentPresetID = preset.id
-            state.clearLiveOverrides()
+            // Note: clearLiveOverrides() is called via a Combine subscription in AppState
+            // to avoid publishing @Published changes during SwiftUI's view-update pass.
             switch state.presetManager.pendingTransition {
             case .smooth:
                 renderer.beginTransition(
