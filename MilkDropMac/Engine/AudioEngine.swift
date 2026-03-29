@@ -33,29 +33,32 @@ class AudioEngine: ObservableObject {
     @Published var isRunning: Bool = false
     @Published var availableDevices: [AVCaptureDevice] = []
 
-    // FFT configuration
-    private let fftSize   = 1024
-    private let hopSize   = 512
-    private var fftSetup: FFTSetup?
-    private var window:   [Float] = []
+    // FFT configuration — marked nonisolated(unsafe) so they can be read from the
+    // background audioQueue without hopping to the main actor. Only ever written
+    // during init (fftSetup, window) or configureSession (formatConverter), so
+    // there is no concurrent write hazard.
+    private let fftSize  = 1024
+    private let hopSize  = 512
+    nonisolated(unsafe) private var fftSetup: FFTSetup?
+    nonisolated(unsafe) private var window:   [Float] = []
 
-    // Ring buffer for audio samples
-    private var ringBuffer: [Float]
-    private var ringWrite: Int = 0
+    // Ring buffer — only touched from audioQueue (serial), safe as nonisolated(unsafe)
+    nonisolated(unsafe) private var ringBuffer: [Float]
+    nonisolated(unsafe) private var ringWrite:  Int = 0
 
     // AVAudioEngine pipeline
     private let engine = AVAudioEngine()
     private var inputNode: AVAudioInputNode { engine.inputNode }
-    private var formatConverter: AVAudioConverter?
+    nonisolated(unsafe) private var formatConverter: AVAudioConverter?
 
-    // Processing queues
+    // Serial background queue — all heavy audio work runs here, never on main
     private let audioQueue = DispatchQueue(label: "milkdrop.audio", qos: .userInteractive)
 
-    // Smoothing
-    private var bassSmooth:   Float = 0
-    private var midSmooth:    Float = 0
-    private var trebleSmooth: Float = 0
-    private var rmsSmooth:    Float = 0
+    // Smoothing — only touched from audioQueue
+    nonisolated(unsafe) private var bassSmooth:   Float = 0
+    nonisolated(unsafe) private var midSmooth:    Float = 0
+    nonisolated(unsafe) private var trebleSmooth: Float = 0
+    nonisolated(unsafe) private var rmsSmooth:    Float = 0
     private let smoothFactor: Float = 0.7
 
     init() {
@@ -114,11 +117,10 @@ class AudioEngine: ObservableObject {
     }
 
     private func configureSession(source: AudioSource) throws {
-        // Remove existing tap
         inputNode.removeTap(onBus: 0)
 
         // Must tap at the input node's NATIVE format — AVAudioEngine does not auto-convert.
-        // We use AVAudioConverter to downsample/convert to mono float32 44100 Hz for the FFT.
+        // AVAudioConverter handles the resample/channel-mix to mono float32 44100 Hz.
         let inputFormat = inputNode.inputFormat(forBus: 0)
         let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -128,27 +130,29 @@ class AudioEngine: ObservableObject {
         )!
         formatConverter = AVAudioConverter(from: inputFormat, to: targetFormat)
 
-        // @preconcurrency import AVFoundation suppresses Sendable warnings for AVAudioPCMBuffer
+        // The tap fires on the audio render thread. Dispatch to audioQueue so
+        // conversion + FFT run on a background thread, never on the main thread.
         inputNode.installTap(onBus: 0, bufferSize: 512, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
-            self.audioQueue.async { [weak self] in
-                Task { @MainActor [weak self] in
-                    self?.processTap(buffer: buffer, targetFormat: targetFormat)
-                }
+            self.audioQueue.async {
+                self.processTap(buffer: buffer, targetFormat: targetFormat)
             }
         }
 
         engine.prepare()
     }
 
-    // MARK: - Audio processing
+    // MARK: - Audio processing (runs on audioQueue — NOT main actor)
 
-    private func processTap(buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) {
+    // nonisolated so the method body executes on the calling queue (audioQueue)
+    // rather than hopping to the @MainActor. State accessed here is either
+    // nonisolated(unsafe) or local.
+    nonisolated private func processTap(buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) {
         guard let converter = formatConverter else { return }
 
-        // Convert from native hardware format → mono float32 44100 Hz
         let frameCount = AVAudioFrameCount(buffer.frameLength)
-        guard let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: max(frameCount * 2, 1024)),
+        guard let converted = AVAudioPCMBuffer(pcmFormat: targetFormat,
+                                               frameCapacity: max(frameCount * 2, 1024)),
               let channelData = converted.floatChannelData else { return }
 
         var error: NSError?
@@ -161,81 +165,71 @@ class AudioEngine: ObservableObject {
         let sampleCount = Int(converted.frameLength)
         let samples = Array(UnsafeBufferPointer(start: channelData[0], count: sampleCount))
 
-        // Write to ring buffer
         for sample in samples {
             ringBuffer[ringWrite % ringBuffer.count] = sample
             ringWrite += 1
         }
 
-        // Compute FFT when we have enough new data
-        if ringWrite >= hopSize {
-            let data = computeAudioData()
-            Task { @MainActor in
-                self.audioData = data
-            }
+        guard ringWrite >= hopSize else { return }
+
+        let data = computeAudioData()
+
+        // Publish on main using async — defers to the next run loop iteration so
+        // we never publish inside a SwiftUI view-update pass.
+        DispatchQueue.main.async { [weak self] in
+            self?.audioData = data
         }
     }
 
-    private func computeAudioData() -> AudioData {
-        // Extract fftSize samples from ring buffer
+    nonisolated private func computeAudioData() -> AudioData {
         let start = (ringWrite - fftSize + ringBuffer.count) % ringBuffer.count
         var samples = [Float](repeating: 0, count: fftSize)
         for i in 0..<fftSize {
             samples[i] = ringBuffer[(start + i) % ringBuffer.count]
         }
 
-        // Waveform (first 512 samples, normalized)
         let waveform = Array(samples.prefix(512))
 
-        // Apply Hann window
         var windowed = [Float](repeating: 0, count: fftSize)
         vDSP_vmul(samples, 1, window, 1, &windowed, 1, vDSP_Length(fftSize))
 
-        // Forward FFT
         let halfN = fftSize / 2
-        var realPart = [Float](repeating: 0, count: halfN)
-        var imagPart = [Float](repeating: 0, count: halfN)
+        var realPart  = [Float](repeating: 0, count: halfN)
+        var imagPart  = [Float](repeating: 0, count: halfN)
         var magnitudes = [Float](repeating: 0, count: halfN)
         realPart.withUnsafeMutableBufferPointer { realBuf in
             imagPart.withUnsafeMutableBufferPointer { imagBuf in
-                var splitComplex = DSPSplitComplex(realp: realBuf.baseAddress!, imagp: imagBuf.baseAddress!)
-
+                var splitComplex = DSPSplitComplex(realp: realBuf.baseAddress!,
+                                                   imagp: imagBuf.baseAddress!)
                 windowed.withUnsafeBytes { ptr in
                     let complexPtr = ptr.bindMemory(to: DSPComplex.self)
                     vDSP_ctoz(complexPtr.baseAddress!, 2, &splitComplex, 1, vDSP_Length(halfN))
                 }
-
                 let log2n = vDSP_Length(log2(Double(fftSize)))
                 vDSP_fft_zrip(fftSetup!, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
-
                 vDSP_zvabs(&splitComplex, 1, &magnitudes, 1, vDSP_Length(halfN))
             }
         }
 
-        // Scale
         var scale: Float = 2.0 / Float(fftSize)
         vDSP_vsmul(magnitudes, 1, &scale, &magnitudes, 1, vDSP_Length(halfN))
 
-        // Reduce to 256 bins (logarithmic grouping for perceptual scaling)
         let spectrum = reduceSpectrum(magnitudes, outputBins: 256)
 
-        // Frequency bands (44100 Hz, halfN bins → sampleRate/2 Hz at bin halfN)
-        let binHz = 44100.0 / Double(fftSize)
-        let bassEnd   = Int(200.0  / binHz)
-        let midEnd    = Int(2000.0 / binHz)
+        let binHz   = 44100.0 / Double(fftSize)
+        let bassEnd = Int(200.0  / binHz)
+        let midEnd  = Int(2000.0 / binHz)
 
-        let bassRaw   = rms(magnitudes[1..<min(bassEnd, halfN)])
-        let midRaw    = rms(magnitudes[bassEnd..<min(midEnd, halfN)])
-        let trebleRaw = rms(magnitudes[midEnd..<halfN])
-        let rmsRaw    = rms(samples)
+        let bassRaw   = rmsOf(magnitudes[1..<min(bassEnd, halfN)])
+        let midRaw    = rmsOf(magnitudes[bassEnd..<min(midEnd, halfN)])
+        let trebleRaw = rmsOf(magnitudes[midEnd..<halfN])
+        let rmsRaw    = rmsOf(samples)
 
-        // Smooth
         bassSmooth   = bassSmooth   * smoothFactor + bassRaw   * (1 - smoothFactor)
         midSmooth    = midSmooth    * smoothFactor + midRaw    * (1 - smoothFactor)
         trebleSmooth = trebleSmooth * smoothFactor + trebleRaw * (1 - smoothFactor)
         rmsSmooth    = rmsSmooth    * smoothFactor + rmsRaw    * (1 - smoothFactor)
 
-        // Attenuated bass for beat detection (slower attack, fast decay like MilkDrop)
         let bassLevel = min(bassSmooth * 3.0, 1.0)
         let bassAttn  = max(bassLevel - 0.4, 0) / 0.6
 
@@ -251,10 +245,9 @@ class AudioEngine: ObservableObject {
         )
     }
 
-    private func reduceSpectrum(_ input: [Float], outputBins: Int) -> [Float] {
+    nonisolated private func reduceSpectrum(_ input: [Float], outputBins: Int) -> [Float] {
         var output = [Float](repeating: 0, count: outputBins)
         let n = input.count
-        // Skip DC bin (index 0); map [1..n] → log scale across outputBins
         let logMin = log2(1.0)
         let logMax = log2(Double(n))
         for i in 0..<outputBins {
@@ -270,7 +263,7 @@ class AudioEngine: ObservableObject {
         return output
     }
 
-    private func rms<S: Collection>(_ samples: S) -> Float where S.Element == Float {
+    nonisolated private func rmsOf<S: Collection>(_ samples: S) -> Float where S.Element == Float {
         guard !samples.isEmpty else { return 0 }
         var sumSq: Float = 0
         let arr = Array(samples)
