@@ -74,10 +74,10 @@ class PresetManager: ObservableObject {
         loadProgress = 1.0
         isLoading = false
 
-        // Select a random starting preset
+        // Select a random starting preset (go through setPreset so data is loaded from disk)
         if !presets.isEmpty {
             currentIndex = Int.random(in: 0..<presets.count)
-            currentPreset = presets[currentIndex]
+            setPreset(presets[currentIndex], transition: .instant)
         }
     }
 

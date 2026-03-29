@@ -125,6 +125,9 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     var onFPSUpdate: ((Double) -> Void)?
     private var smoothedFPS: Double = 60
 
+    // Seed feedback textures on next draw (ensures warp has something to distort)
+    private var needsFeedbackSeed: Bool = true
+
     // MARK: - Init
 
     init?(device: MTLDevice) {
@@ -327,6 +330,9 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         if let preset = currentPreset {
             evaluatePreset(preset)
         }
+
+        // Seed feedback textures when a new preset is loaded
+        seedFeedbackIfNeeded(cmd: cmdBuf)
 
         // Ping-pong feedback textures
         let (readTex, writeTex) = pingPong
@@ -833,6 +839,28 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         currentPreset = mutablePreset
         // Run per_frame_init equations and reset q-vars for the new preset
         evaluator.initPreset(initEquations: mutablePreset.parameters?.perFrameInit ?? "", uniforms: &uniforms, audio: audioData)
+        // Seed feedback so the warp has non-black content to distort
+        needsFeedbackSeed = true
+    }
+
+    // Seed both warp ping-pong textures with a subtle dark gradient so
+    // the warp feedback loop has something visible to distort from frame 1.
+    private func seedFeedbackIfNeeded(cmd: MTLCommandBuffer) {
+        guard needsFeedbackSeed,
+              let texA = warpTextureA, let texB = warpTextureB else { return }
+        needsFeedbackSeed = false
+
+        // Use a simple render-to-texture clear pass in a very dark blue-purple
+        // (matches MilkDrop's traditional startup gradient feel)
+        for tex in [texA, texB] {
+            var desc = MTLRenderPassDescriptor()
+            desc.colorAttachments[0].texture     = tex
+            desc.colorAttachments[0].loadAction  = .clear
+            desc.colorAttachments[0].storeAction = .store
+            desc.colorAttachments[0].clearColor  = MTLClearColor(red: 0.04, green: 0.02, blue: 0.06, alpha: 1)
+            guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { continue }
+            enc.endEncoding()
+        }
     }
 
     func beginTransition(to preset: MilkDropPreset, type: Int32 = 0, duration: Float = 2.5) {

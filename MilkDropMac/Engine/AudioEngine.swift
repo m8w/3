@@ -1,7 +1,7 @@
 // AudioEngine.swift — Captures audio and produces FFT + waveform data for the visualizer
 
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 import Accelerate
 import Combine
 
@@ -46,7 +46,6 @@ class AudioEngine: ObservableObject {
     // AVAudioEngine pipeline
     private let engine = AVAudioEngine()
     private var inputNode: AVAudioInputNode { engine.inputNode }
-    private var formatConverter: AVAudioConverter?
 
     // Processing queues
     private let audioQueue = DispatchQueue(label: "milkdrop.audio", qos: .userInteractive)
@@ -81,8 +80,14 @@ class AudioEngine: ObservableObject {
     }
 
     private func fetchDevices() {
+        var types: [AVCaptureDevice.DeviceType] = [.microphone]
+        if #available(macOS 14.0, *) {
+            types.append(.external)
+        } else {
+            types.append(.externalUnknown)
+        }
         availableDevices = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.microphone, .externalUnknown],
+            deviceTypes: types,
             mediaType: .audio,
             position: .unspecified
         ).devices
@@ -111,9 +116,7 @@ class AudioEngine: ObservableObject {
         // Remove existing tap
         inputNode.removeTap(onBus: 0)
 
-        let inputFormat = inputNode.inputFormat(forBus: 0)
-
-        // Target format: mono, 44100 Hz, float32
+        // Target format: mono, 44100 Hz, float32 — AVAudioEngine auto-converts from native input
         let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: 44100,
@@ -121,25 +124,16 @@ class AudioEngine: ObservableObject {
             interleaved: false
         )!
 
-        formatConverter = AVAudioConverter(from: inputFormat, to: targetFormat)
-
-        inputNode.installTap(onBus: 0, bufferSize: 512, format: inputFormat) { [weak self] buffer, _ in
+        // Install tap with targetFormat so AVAudioEngine handles conversion automatically.
+        // Extract samples as [Float] immediately to avoid capturing non-Sendable AVAudioPCMBuffer.
+        inputNode.installTap(onBus: 0, bufferSize: 512, format: targetFormat) { [weak self] buffer, _ in
             guard let self else { return }
-            let frameLength = buffer.frameLength
-            let frameCapacity = buffer.frameCapacity
-            let format = buffer.format
-            // Copy PCM data to avoid capturing non-Sendable AVAudioPCMBuffer
-            guard let copy = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCapacity),
-                  let srcData = buffer.floatChannelData,
-                  let dstData = copy.floatChannelData else { return }
-            copy.frameLength = frameLength
-            let channelCount = Int(format.channelCount)
-            for ch in 0..<channelCount {
-                memcpy(dstData[ch], srcData[ch], Int(frameLength) * MemoryLayout<Float>.size)
-            }
+            let frameLen = Int(buffer.frameLength)
+            guard let src = buffer.floatChannelData else { return }
+            let samples = Array(UnsafeBufferPointer(start: src[0], count: frameLen))
             self.audioQueue.async { [weak self] in
                 Task { @MainActor [weak self] in
-                    self?.processTap(buffer: copy, targetFormat: targetFormat)
+                    self?.processTapSamples(samples)
                 }
             }
         }
@@ -149,25 +143,7 @@ class AudioEngine: ObservableObject {
 
     // MARK: - Audio processing
 
-    private func processTap(buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) {
-        guard let converter = formatConverter else { return }
-
-        // Convert to mono float32
-        let frameCount = AVAudioFrameCount(buffer.frameLength)
-        guard let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: frameCount),
-              let channelData = converted.floatChannelData
-        else { return }
-
-        var error: NSError?
-        converter.convert(to: converted, error: &error) { _, outStatus in
-            outStatus.pointee = .haveData
-            return buffer
-        }
-        guard error == nil else { return }
-
-        converted.frameLength = frameCount
-        let samples = Array(UnsafeBufferPointer(start: channelData[0], count: Int(frameCount)))
-
+    private func processTapSamples(_ samples: [Float]) {
         // Write to ring buffer
         for sample in samples {
             ringBuffer[ringWrite % ringBuffer.count] = sample
