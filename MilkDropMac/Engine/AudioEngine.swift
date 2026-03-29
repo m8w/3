@@ -46,6 +46,7 @@ class AudioEngine: ObservableObject {
     // AVAudioEngine pipeline
     private let engine = AVAudioEngine()
     private var inputNode: AVAudioInputNode { engine.inputNode }
+    private var formatConverter: AVAudioConverter?
 
     // Processing queues
     private let audioQueue = DispatchQueue(label: "milkdrop.audio", qos: .userInteractive)
@@ -116,24 +117,23 @@ class AudioEngine: ObservableObject {
         // Remove existing tap
         inputNode.removeTap(onBus: 0)
 
-        // Target format: mono, 44100 Hz, float32 — AVAudioEngine auto-converts from native input
+        // Must tap at the input node's NATIVE format — AVAudioEngine does not auto-convert.
+        // We use AVAudioConverter to downsample/convert to mono float32 44100 Hz for the FFT.
+        let inputFormat = inputNode.inputFormat(forBus: 0)
         let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: 44100,
             channels: 1,
             interleaved: false
         )!
+        formatConverter = AVAudioConverter(from: inputFormat, to: targetFormat)
 
-        // Install tap with targetFormat so AVAudioEngine handles conversion automatically.
-        // Extract samples as [Float] immediately to avoid capturing non-Sendable AVAudioPCMBuffer.
-        inputNode.installTap(onBus: 0, bufferSize: 512, format: targetFormat) { [weak self] buffer, _ in
+        // @preconcurrency import AVFoundation suppresses Sendable warnings for AVAudioPCMBuffer
+        inputNode.installTap(onBus: 0, bufferSize: 512, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
-            let frameLen = Int(buffer.frameLength)
-            guard let src = buffer.floatChannelData else { return }
-            let samples = Array(UnsafeBufferPointer(start: src[0], count: frameLen))
             self.audioQueue.async { [weak self] in
                 Task { @MainActor [weak self] in
-                    self?.processTapSamples(samples)
+                    self?.processTap(buffer: buffer, targetFormat: targetFormat)
                 }
             }
         }
@@ -143,7 +143,24 @@ class AudioEngine: ObservableObject {
 
     // MARK: - Audio processing
 
-    private func processTapSamples(_ samples: [Float]) {
+    private func processTap(buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) {
+        guard let converter = formatConverter else { return }
+
+        // Convert from native hardware format → mono float32 44100 Hz
+        let frameCount = AVAudioFrameCount(buffer.frameLength)
+        guard let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: max(frameCount * 2, 1024)),
+              let channelData = converted.floatChannelData else { return }
+
+        var error: NSError?
+        converter.convert(to: converted, error: &error) { _, outStatus in
+            outStatus.pointee = .haveData
+            return buffer
+        }
+        guard error == nil else { return }
+
+        let sampleCount = Int(converted.frameLength)
+        let samples = Array(UnsafeBufferPointer(start: channelData[0], count: sampleCount))
+
         // Write to ring buffer
         for sample in samples {
             ringBuffer[ringWrite % ringBuffer.count] = sample
