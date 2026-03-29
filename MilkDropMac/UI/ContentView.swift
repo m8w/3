@@ -160,7 +160,15 @@ struct VisualizerView: NSViewRepresentable {
             let renderer = MilkDropRenderer(device: device)
             view.delegate = renderer
             context.coordinator.renderer = renderer
+            // Wire renderer directly to the AudioEngine's raw audioData so it gets
+            // updates at full audio rate without going through SwiftUI/@Published.
+            // AppState.processedAudio is throttled to 30 Hz for UI; the renderer
+            // needs the latest data every render frame.
+            context.coordinator.audioEngine = state.audioEngine
             renderer?.onFPSUpdate = { fps in
+                // Only publish when the HUD is visible — avoids 60 Hz @Published
+                // updates that trigger unnecessary SwiftUI re-renders.
+                guard state.showFPSCounter else { return }
                 DispatchQueue.main.async {
                     state.currentFPS = fps
                 }
@@ -174,7 +182,9 @@ struct VisualizerView: NSViewRepresentable {
 
     func updateNSView(_ view: MTKView, context: Context) {
         guard let renderer = context.coordinator.renderer else { return }
-        renderer.updateAudio(state.processedAudio)
+        // Read directly from AudioEngine (full rate) rather than the throttled
+        // processedAudio in AppState — the renderer needs the freshest data.
+        renderer.updateAudio(context.coordinator.audioEngine?.audioData ?? state.processedAudio)
         // Only act when the preset actually changes — loadPreset resets q-vars
         if let preset = state.presetManager.currentPreset,
            preset.id != context.coordinator.currentPresetID {
@@ -208,6 +218,7 @@ struct VisualizerView: NSViewRepresentable {
     class Coordinator {
         var renderer: MilkDropRenderer?
         var currentPresetID: UUID?
+        weak var audioEngine: AudioEngine?
     }
 }
 
