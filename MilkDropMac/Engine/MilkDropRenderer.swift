@@ -283,6 +283,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         setupTextures(size: size)
+        needsFeedbackSeed = true   // New textures are blank — must re-seed the feedback loop
         uniforms.resolution = SIMD2<Float>(Float(size.width), Float(size.height))
         uniforms.aspect     = Float(size.width / size.height)
     }
@@ -391,6 +392,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         let drawTex = drawable.texture
         if finalTexture.width != drawTex.width || finalTexture.height != drawTex.height {
             setupTextures(size: CGSize(width: drawTex.width, height: drawTex.height))
+            needsFeedbackSeed = true   // New textures are blank — re-seed next frame
             uniforms.resolution = SIMD2<Float>(Float(drawTex.width), Float(drawTex.height))
             uniforms.aspect = Float(drawTex.width) / Float(max(drawTex.height, 1))
             cmdBuf.commit()
@@ -522,32 +524,53 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         enc.endEncoding()
     }
 
-    // A simple bright waveform drawn when the preset has no waves defined.
+    // Drawn when the preset has no waves defined. Uses a triangle-strip band so it's
+    // several percent of screen height and visible regardless of audio level. When audio
+    // is silent the wave animates synthetically so the feedback loop always has content.
     private func renderFallbackWave(enc: MTLRenderCommandEncoder) {
-        let count = min(512, audioData.waveform.count)
-        guard count > 1 else { return }
+        let count = 256
+        let halfThick: Float = 0.022   // Band half-height in UV space (~4% total height)
+
+        // Scale factor: always normalise to a minimum amplitude so the band is wide
+        // even with very quiet audio or complete silence.
+        let rmsGain = max(audioData.rms * 5.0, 0.18)
+        let isSilent = rmsGain < 0.19
+
         var positions = [SIMD2<Float>]()
-        positions.reserveCapacity(count)
+        positions.reserveCapacity(count * 2)
+
         for i in 0..<count {
-            let t   = Float(i) / Float(count - 1)
-            let amp = audioData.waveform[i]
-            positions.append(SIMD2<Float>(t, 0.5 + amp * 0.35))
+            let t = Float(i) / Float(count - 1)
+            let amp: Float
+            if isSilent {
+                // Animated multi-harmonic sine — always active even with no audio input
+                amp = sin(t * .pi * 8  + uniforms.time * 1.8) * 0.20
+                   + sin(t * .pi * 5  - uniforms.time * 1.1) * 0.12
+                   + sin(t * .pi * 13 + uniforms.time * 0.7) * 0.08
+            } else {
+                let raw = audioData.waveform.count > i ? audioData.waveform[i] : 0
+                amp = (raw / rmsGain).clamped(to: -1...1)
+            }
+            let y = 0.5 + amp * 0.35
+            positions.append(SIMD2<Float>(t, y + halfThick))   // top edge
+            positions.append(SIMD2<Float>(t, y - halfThick))   // bottom edge
         }
+
         struct WaveUniforms {
             var color: SIMD4<Float>; var thickness: Float
             var drawThick: Int32; var additive: Int32; var useDots: Int32
             var smoothing: Float; var sampleCount: Int32; var perPointColors: Int32
         }
         var wu = WaveUniforms(
-            color: SIMD4<Float>(0.4, 0.8, 1.0, 0.9), thickness: 1.5,
+            color: SIMD4<Float>(0.3, 0.75, 1.0, 0.95), thickness: halfThick * 2,
             drawThick: 0, additive: 0, useDots: 0,
-            smoothing: 0.4, sampleCount: Int32(count), perPointColors: 0
+            smoothing: 0, sampleCount: Int32(count * 2), perPointColors: 0
         )
-        var dummy = SIMD4<Float>(0.4, 0.8, 1.0, 0.9)
+        var dummy = SIMD4<Float>(0.3, 0.75, 1.0, 0.95)
         enc.setVertexBytes(&positions, length: positions.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
         enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
         enc.setVertexBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
-        enc.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: positions.count)
+        enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: positions.count)
     }
 
     private func renderWave(wave: PresetWave, audioData: AudioData, enc: MTLRenderCommandEncoder) {
@@ -885,14 +908,15 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
               let texA = warpTextureA, let texB = warpTextureB else { return }
         needsFeedbackSeed = false
 
-        // Use a simple render-to-texture clear pass in a very dark blue-purple
-        // (matches MilkDrop's traditional startup gradient feel)
+        // Seed both ping-pong textures to a bright purple so the warp feedback loop
+        // starts with enough luminance to remain visible for several seconds while
+        // the wave pass builds up steady-state content.
         for tex in [texA, texB] {
-            var desc = MTLRenderPassDescriptor()
+            let desc = MTLRenderPassDescriptor()
             desc.colorAttachments[0].texture     = tex
             desc.colorAttachments[0].loadAction  = .clear
             desc.colorAttachments[0].storeAction = .store
-            desc.colorAttachments[0].clearColor  = MTLClearColor(red: 0.15, green: 0.05, blue: 0.25, alpha: 1)
+            desc.colorAttachments[0].clearColor  = MTLClearColor(red: 0.5, green: 0.1, blue: 0.8, alpha: 1)
             guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { continue }
             enc.endEncoding()
         }
