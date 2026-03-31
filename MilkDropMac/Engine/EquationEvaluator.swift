@@ -451,50 +451,56 @@ class EquationEvaluator {
 
     // Evaluate per_vertex equations for one mesh vertex.
     // Returns the UV to sample from the previous frame for that vertex position.
+    //
+    // MilkDrop 2 per_pixel convention:
+    //   1. Compute the default warp UV (same transform as warp_fragment shader).
+    //   2. Seed env["x"]/env["y"] with that pre-warped position.
+    //   3. Run equations — they may further modify x and y (or just read them).
+    //   4. Return the final env["x"]/env["y"] as the sample UV.
+    //
+    // Old code ignored the equations' x,y output and re-applied the warp
+    // transform from scratch, making per_vertex equations completely ineffective.
     func evaluateVertex(equations: [String], x: Float, y: Float,
                         uniforms: MilkDropUniforms, audio: AudioData) -> SIMD2<Float> {
         var env = makeBaseEnv(uniforms: uniforms, audio: audio)
         env.merge(qVars) { _, new in new }
 
-        let xd = Double(x), yd = Double(y)
+        let asp = uniforms.aspect > 0 ? Double(uniforms.aspect) : 1.0
         let ucx = env["cx"] ?? 0.5, ucy = env["cy"] ?? 0.5
-        let rad = sqrt((xd - ucx) * (xd - ucx) + (yd - ucy) * (yd - ucy)) * 2
-        let ang = atan2(yd - ucy, xd - ucx)
-        env["x"]   = xd
-        env["y"]   = yd
-        env["rad"] = rad
-        env["ang"] = ang
+        let xd = Double(x), yd = Double(y)
+
+        // Polar coords relative to warp center (available to equations)
+        env["rad"] = sqrt((xd - ucx) * (xd - ucx) + (yd - ucy) * (yd - ucy)) * 2
+        env["ang"] = atan2(yd - ucy, xd - ucx)
+
+        // Pre-compute the default warp UV — identical math to warp_fragment
+        var uvC = SIMD2<Double>(xd - ucx, yd - ucy) * SIMD2<Double>(asp, 1.0)
+        let zoom = max(env["zoom"] ?? Double(uniforms.zoom), 0.001)
+        uvC /= zoom
+        let rot = env["rot"] ?? Double(uniforms.rot)
+        let cosR = cos(rot), sinR = sin(rot)
+        uvC = SIMD2<Double>(uvC.x * cosR - uvC.y * sinR,
+                            uvC.x * sinR + uvC.y * cosR)
+        uvC *= SIMD2<Double>(env["sx"] ?? Double(uniforms.sx),
+                             env["sy"] ?? Double(uniforms.sy))
+        uvC += SIMD2<Double>(env["dx"] ?? Double(uniforms.dx),
+                             env["dy"] ?? Double(uniforms.dy)) * 2.0
+        let warpAmt = env["warp"] ?? Double(uniforms.warp)
+        let t = Double(uniforms.time * uniforms.warpSpeed) * 0.5
+        uvC.x += sin(t * 1.11 + uvC.y * 3.0) * warpAmt * 0.03
+        uvC.y += cos(t * 0.93 + uvC.x * 2.5) * warpAmt * 0.03
+        let defaultUV = uvC / SIMD2<Double>(asp, 1.0) + SIMD2<Double>(ucx, ucy)
+
+        // Seed x,y with the default warp result; equations can modify from here
+        env["x"] = defaultUV.x
+        env["y"] = defaultUV.y
 
         for eq in equations {
             env = runCode(eq, vars: env)
         }
 
-        // Reconstruct warp transform using (potentially per-vertex modified) params
-        let zoom  = Float(env["zoom"]  ?? Double(uniforms.zoom))
-        let rot   = Float(env["rot"]   ?? Double(uniforms.rot))
-        let warp  = Float(env["warp"]  ?? Double(uniforms.warp))
-        let cx    = Float(env["cx"]    ?? Double(uniforms.cx))
-        let cy    = Float(env["cy"]    ?? Double(uniforms.cy))
-        let dx    = Float(env["dx"]    ?? Double(uniforms.dx))
-        let dy    = Float(env["dy"]    ?? Double(uniforms.dy))
-        let sx    = Float(env["sx"]    ?? Double(uniforms.sx))
-        let sy    = Float(env["sy"]    ?? Double(uniforms.sy))
-        let asp   = uniforms.aspect > 0 ? uniforms.aspect : 1
-
-        // Apply the same warp transform as warp_fragment (replicated in Swift)
-        var uvC = (SIMD2<Float>(x, y) - SIMD2<Float>(cx, cy)) * SIMD2<Float>(asp, 1)
-        uvC /= max(zoom, 0.001)
-        let c = cos(rot), s = sin(rot)
-        uvC = SIMD2<Float>(uvC.x * c - uvC.y * s, uvC.x * s + uvC.y * c)
-        uvC *= SIMD2<Float>(sx, sy)
-        uvC += SIMD2<Float>(dx, dy) * 2
-
-        let t = uniforms.time * uniforms.warpSpeed * 0.5
-        let warpX = sin(t * 1.11 + uvC.y * 3.0) * warp * 0.03
-        let warpY = cos(t * 0.93 + uvC.x * 2.5) * warp * 0.03
-        uvC += SIMD2<Float>(warpX, warpY)
-
-        return uvC / SIMD2<Float>(asp, 1) + SIMD2<Float>(cx, cy)
+        return SIMD2<Float>(Float(env["x"] ?? defaultUV.x),
+                            Float(env["y"] ?? defaultUV.y))
     }
 
     // MARK: - Private helpers

@@ -654,7 +654,54 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         if wave.useDots {
             enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: positions.count)
         } else {
-            enc.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: positions.count)
+            // Expand to a thick ribbon (triangleStrip) instead of a 1-px lineStrip.
+            // Metal has no line-width support; a 1-px wave covers tiny screen area and
+            // provides almost no content for the feedback loop. A ribbon gives proper
+            // MilkDrop-style visible waveforms.
+            let halfThick: Float = wave.drawThick ? 0.006 : 0.003   // UV space
+
+            var ribbon = [SIMD2<Float>]()
+            var ribbonColors = [SIMD4<Float>]()
+            ribbon.reserveCapacity(positions.count * 2)
+            ribbonColors.reserveCapacity(positions.count * 2)
+
+            for i in 0..<positions.count {
+                let prev = positions[max(i - 1, 0)]
+                let curr = positions[i]
+                let next = positions[min(i + 1, positions.count - 1)]
+
+                // Average tangent for mitered joints
+                var tan = SIMD2<Float>(0, 0)
+                if i > 0                    { tan += normalize(curr - prev) }
+                if i < positions.count - 1 { tan += normalize(next - curr) }
+                let tlen = simd_length(tan)
+                let perp: SIMD2<Float>
+                if tlen > 1e-6 {
+                    let t2 = tan / tlen
+                    perp = SIMD2<Float>(-t2.y, t2.x)
+                } else {
+                    perp = SIMD2<Float>(0, 1)
+                }
+
+                ribbon.append(curr + perp * halfThick)
+                ribbon.append(curr - perp * halfThick)
+                if hasPerPointColors {
+                    ribbonColors.append(colors[i])
+                    ribbonColors.append(colors[i])
+                }
+            }
+
+            wu.sampleCount = Int32(ribbon.count)
+            enc.setVertexBytes(&ribbon, length: ribbon.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
+            enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
+            if hasPerPointColors {
+                enc.setVertexBytes(&ribbonColors,
+                                   length: ribbonColors.count * MemoryLayout<SIMD4<Float>>.stride, index: 2)
+            } else {
+                var dummy = SIMD4<Float>(wave.r, wave.g, wave.b, wave.a)
+                enc.setVertexBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
+            }
+            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: ribbon.count)
         }
     }
 
