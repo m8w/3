@@ -233,6 +233,8 @@ struct CompositeUniforms {
     // Fractal stream overlay
     float fractalBlend;
     int   fractalEnabled;
+    // Per-frame color overlay (r,g,b set by EEL per-frame equations; amb = strength)
+    float r; float g; float b; float amb;
 };
 
 fragment float4 composite_fragment(
@@ -259,6 +261,12 @@ fragment float4 composite_fragment(
     if (u.fractalEnabled != 0) {
         float4 fractal = fractalTex.sample(s, uv);
         color.rgb += fractal.rgb * fractal.a * u.fractalBlend;
+    }
+
+    // Per-frame color overlay: r,g,b set by EEL per-frame equations, amb is strength.
+    // Additive so bright presets glow with the animated palette. Skipped when amb==0.
+    if (u.amb > 0.0) {
+        color.rgb += float3(u.r, u.g, u.b) * u.amb;
     }
 
     // Gamma (MilkDrop fGammaAdj): simple brightness multiplier, NOT a power curve.

@@ -537,6 +537,12 @@ class EquationEvaluator {
         env["decay"]  = Double(uniforms.decay)
         env["gamma"]  = Double(uniforms.gamma)
 
+        // Per-frame color overlay (set by equations like r=0.3+0.4*bass)
+        env["r"]      = Double(uniforms.r)
+        env["g"]      = Double(uniforms.g)
+        env["b"]      = Double(uniforms.b)
+        env["a"]      = Double(uniforms.amb)
+
         // Video echo / composite pass
         env["echo_zoom"]    = Double(uniforms.videoEchoZoom)
         env["echo_alpha"]   = Double(uniforms.videoEchoAlpha)
@@ -577,6 +583,10 @@ class EquationEvaluator {
         if let v = env["sy"]      { uniforms.sy      = Float(v) }
         if let v = env["decay"]   { uniforms.decay   = Float(v) }
         if let v = env["gamma"]   { uniforms.gamma   = Float(v) }
+        if let v = env["r"]       { uniforms.r       = Float(v) }
+        if let v = env["g"]       { uniforms.g       = Float(v) }
+        if let v = env["b"]       { uniforms.b       = Float(v) }
+        if let v = env["a"]       { uniforms.amb     = Float(v) }
 
         if let v = env["echo_zoom"]   { uniforms.videoEchoZoom        = Float(v) }
         if let v = env["echo_alpha"]  { uniforms.videoEchoAlpha       = Float(v) }

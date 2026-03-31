@@ -55,6 +55,12 @@ struct MilkDropUniforms {
 
     var resolution:          SIMD2<Float> = .zero
     var aspect:              Float = 1
+
+    // Per-frame color overlay (r,g,b set by per-frame equations; amb = alpha/strength)
+    var r:   Float = 0
+    var g:   Float = 0
+    var b:   Float = 0
+    var amb: Float = 0
 }
 
 // MARK: - Renderer
@@ -562,7 +568,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             var smoothing: Float; var sampleCount: Int32; var perPointColors: Int32
         }
         var wu = WaveUniforms(
-            color: SIMD4<Float>(0.3, 0.75, 1.0, 0.95), thickness: halfThick * 2,
+            color: SIMD4<Float>(1.0, 0.9, 0.85, 0.07), thickness: halfThick * 2,
             drawThick: 0, additive: 0, useDots: 0,
             smoothing: 0, sampleCount: Int32(count * 2), perPointColors: 0
         )
@@ -742,6 +748,8 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
                     Float,Float,Float,Float,Float,Float,Float,Float)
             var fractalBlend: Float
             var fractalEnabled: Int32
+            // Per-frame color overlay (r,g,b from equations, amb = strength)
+            var r: Float; var g: Float; var b: Float; var amb: Float
         }
         var cu = CompositeUniforms(
             brightness: 1.0,
@@ -755,7 +763,8 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             treble: uniforms.treble,
             q: uniforms.q,
             fractalBlend: fractalBlend,
-            fractalEnabled: fractalEnabled ? 1 : 0
+            fractalEnabled: fractalEnabled ? 1 : 0,
+            r: uniforms.r, g: uniforms.g, b: uniforms.b, amb: uniforms.amb
         )
 
         enc.setFragmentBytes(&cu, length: MemoryLayout<CompositeUniforms>.stride, index: 0)
@@ -862,6 +871,10 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         uniforms.videoEchoAlpha     = params.videoEchoAlpha
         uniforms.videoEchoZoom      = params.videoEchoZoom
         uniforms.videoEchoOrientation = Int32(params.videoEchoOrientation)
+        uniforms.r                  = params.r
+        uniforms.g                  = params.g
+        uniforms.b                  = params.b
+        uniforms.amb                = params.a
 
         // Evaluate per-frame equations (modifies uniforms via evaluator)
         evaluator.evaluate(equations: params.perFrame, uniforms: &uniforms, audio: audioData)
@@ -920,7 +933,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             desc.colorAttachments[0].texture     = tex
             desc.colorAttachments[0].loadAction  = .clear
             desc.colorAttachments[0].storeAction = .store
-            desc.colorAttachments[0].clearColor  = MTLClearColor(red: 0.5, green: 0.1, blue: 0.8, alpha: 1)
+            desc.colorAttachments[0].clearColor  = MTLClearColor(red: 0.75, green: 0.15, blue: 0.45, alpha: 1)
             guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { continue }
             enc.endEncoding()
         }
