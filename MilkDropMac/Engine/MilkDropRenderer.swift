@@ -85,7 +85,6 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     var transitionTextureA: MTLTexture?  // For preset blending
     var transitionTextureB: MTLTexture?
     var fractalTexture: MTLTexture?      // Fractal stream overlay
-    var pingPong: Bool = false
 
     // Equation evaluator
     var evaluator = EquationEvaluator()
@@ -335,11 +334,12 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         // Seed feedback textures when a new preset is loaded
         seedFeedbackIfNeeded(cmd: cmdBuf)
 
-        // Ping-pong feedback textures
-        let (readTex, writeTex) = pingPong
-            ? (warpTextureB!, warpTextureA!)
-            : (warpTextureA!, warpTextureB!)
-        pingPong.toggle()
+        // Fixed feedback textures: A holds the composite output (warp reads this),
+        // B is the warp scratch (composite reads this). No ping-pong — toggling caused
+        // the composite output to become the warp's *write* target next frame instead of
+        // its *read* target, so wave/shape content never fed back into the warp loop.
+        let readTex  = warpTextureA!   // composite output from previous frame → warp input
+        let writeTex = warpTextureB!   // warp writes here → composite reads this
 
         // 1. Warp pass: distort previous composite (readTex) → writeTex
         // Use mesh warp when per_vertex equations are present, otherwise full-screen quad

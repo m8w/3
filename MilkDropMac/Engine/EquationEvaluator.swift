@@ -268,6 +268,9 @@ private struct Parser {
             expect(.rparen)
             return v
         default:
+            // Unrecognized token (e.g. bare '&' or '|') — must consume to prevent
+            // evalStatements from looping forever waiting for .eof
+            consume()
             return 0
         }
     }
