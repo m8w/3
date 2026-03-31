@@ -496,10 +496,23 @@ class EquationEvaluator {
 
     // MARK: - Private helpers
 
+    // Cache tokenized form of each unique equation string.
+    // Re-tokenizing 512 samples × 64 per_point equations per frame (~32K calls)
+    // was the source of the UI freeze — the token array is now built once per
+    // unique string and reused for every evaluation.
+    private var tokenCache: [String: [Token]] = [:]
+
     private func runCode(_ code: String, vars: [String: Double]) -> [String: Double] {
-        guard !code.trimmingCharacters(in: .whitespaces).isEmpty else { return vars }
-        var lexer = Lexer(code)
-        let tokens = lexer.tokenize()
+        let trimmed = code.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return vars }
+        let tokens: [Token]
+        if let cached = tokenCache[trimmed] {
+            tokens = cached
+        } else {
+            var lexer = Lexer(trimmed)
+            tokens = lexer.tokenize()
+            tokenCache[trimmed] = tokens
+        }
         var parser = Parser(tokens: tokens, vars: vars)
         _ = parser.evalStatements()
         return parser.vars

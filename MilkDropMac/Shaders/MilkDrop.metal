@@ -119,8 +119,8 @@ fragment float4 warp_fragment(
     // Sample feedback texture
     float4 color = prev.sample(tex_sampler, sampleUV);
 
-    // Apply gamma and decay
-    color.rgb = pow(max(color.rgb, 0.0), float3(u.gamma));
+    // Apply decay only — gamma is applied once in the composite pass,
+    // not here, to avoid double-gamma crushing everything to black.
     color.rgb *= u.decay;
 
     return color;
@@ -261,8 +261,9 @@ fragment float4 composite_fragment(
         color.rgb += fractal.rgb * fractal.a * u.fractalBlend;
     }
 
-    // Gamma / brightness
-    color.rgb = pow(max(color.rgb, 0.0), float3(u.gamma));
+    // Gamma (MilkDrop fGammaAdj): simple brightness multiplier, NOT a power curve.
+    // Higher gamma = brighter image. Applied once here, never in the warp pass.
+    color.rgb *= u.gamma;
     color.rgb *= u.brightness;
 
     // Vignette (subtle)
@@ -475,8 +476,7 @@ fragment float4 mesh_warp_fragment(
 ) {
     constexpr sampler s(address::repeat, filter::linear);
     float4 color = prev.sample(s, in.texcoord);
-    color.rgb = pow(max(color.rgb, 0.0), float3(u.gamma));
-    color.rgb *= u.decay;
+    color.rgb *= u.decay;   // gamma applied once in composite, not here
     return color;
 }
 

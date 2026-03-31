@@ -574,7 +574,11 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     }
 
     private func renderWave(wave: PresetWave, audioData: AudioData, enc: MTLRenderCommandEncoder) {
-        let sampleCount = min(wave.samples, audioData.waveform.count)
+        // Cap per_point evaluation to 128 samples: draw(in:) runs on the main thread
+        // (MTKView display link), so 512 samples × many equations causes UI freezes.
+        // 128 samples is visually indistinguishable from 512 for waveform rendering.
+        let rawSamples = min(wave.samples, audioData.waveform.count)
+        let sampleCount = wave.perPoint.isEmpty ? rawSamples : min(rawSamples, 128)
         guard sampleCount > 1 else { return }
 
         // Build vertex array — use per-point equations if the wave defines them

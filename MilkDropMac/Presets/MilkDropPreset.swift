@@ -215,17 +215,20 @@ enum PresetParser {
             switch key {
             case "frating":            params.rating           = Float(value) ?? 3
             case "fgammadj":           params.gamma            = Float(value) ?? 1
-            case "fvideoechodecay":    params.decay            = Float(value) ?? 0.98
+            case "fdecay":             params.decay            = Float(value) ?? 0.98
+            case "fvideoechodecay":    params.videoEchoAlpha   = Float(value) ?? 0    // was wrongly mapped to decay
             case "fzoom":              params.zoomAmount       = Float(value) ?? 1
             case "frot":               params.rotatAmount      = Float(value) ?? 0
             case "fwarpscale":         params.warpScale        = Float(value) ?? 1
             case "fwarpanimspeed":     params.warpSpeed        = Float(value) ?? 1
-            case "fxcenter":           params.centreX          = Float(value) ?? 0.5
-            case "fycenter":           params.centreY          = Float(value) ?? 0.5
+            case "fxcenter", "fxcent": params.centreX          = Float(value) ?? 0.5
+            case "fycenter", "fycent": params.centreY          = Float(value) ?? 0.5
+            case "frotcx":             params.centreX          = Float(value) ?? 0.5
+            case "frotcy":             params.centreY          = Float(value) ?? 0.5
             case "szx":                params.szx              = Float(value) ?? 1
             case "szy":                params.szy              = Float(value) ?? 1
-            case "fvideoechodecayalpha": params.videoEchoAlpha = Float(value) ?? 0
-            case "fvideoechodecayzoom": params.videoEchoZoom   = Float(value) ?? 1
+            case "fvideoechodecayalpha", "fvideoechodecay2": params.videoEchoAlpha = Float(value) ?? 0
+            case "fvideoechodecayzoom":  params.videoEchoZoom  = Float(value) ?? 1
             case "ivideoechodecayorientation": params.videoEchoOrientation = Int(value) ?? 0
             case "bgammadj":
                 break  // legacy
