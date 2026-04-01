@@ -257,6 +257,17 @@ fragment float4 composite_fragment(
     color.rgb = mix(color.rgb, waves.rgb, waves.a);
     color.rgb = mix(color.rgb, shapes.rgb, shapes.a);
 
+    // Minimum-brightness glow: prevents the feedback loop from converging to complete
+    // black when decay*gamma < 1. Cycles slowly through the full rainbow so any
+    // preset without enough wave content still has something alive and colourful.
+    // Kept intentionally faint (0.012) so bright presets barely notice it.
+    float3 glowCol = float3(
+        0.5 + 0.5 * sin(u.time * 0.29),
+        0.5 + 0.5 * sin(u.time * 0.29 + 2.094),
+        0.5 + 0.5 * sin(u.time * 0.29 + 4.189)
+    );
+    color.rgb += glowCol * 0.012;
+
     // Fractal stream overlay (additive blend for glow effect)
     if (u.fractalEnabled != 0) {
         float4 fractal = fractalTex.sample(s, uv);

@@ -1,0 +1,86 @@
+[preset00]
+fRating=5
+fGammaAdj=2.5
+fDecay=0.98
+fZoom=1.12
+fRot=0.008
+fWarpScale=1.5
+fWarpAnimSpeed=0.8
+fXCentre=0.5
+fYCentre=0.5
+szx=1.0
+szy=1.0
+
+per_frame_1=zoom = 1.12 + 0.08*bass;
+per_frame_2=rot = rot + 0.008 + 0.005*sin(time*0.11);
+per_frame_3=warp = 1.5 + mid*1.5;
+per_frame_4=cx = 0.5 + 0.08*sin(time*0.13);
+per_frame_5=cy = 0.5 + 0.08*cos(time*0.17);
+per_frame_6=decay = 0.98 - 0.015*treble;
+per_frame_7=dx = 0.002*sin(time*0.31);
+per_frame_8=dy = 0.002*cos(time*0.29);
+per_frame_9=r = 0.4 + 0.4*sin(time*0.19);
+per_frame_10=g = 0.4 + 0.4*sin(time*0.19 + 2.094);
+per_frame_11=b = 0.4 + 0.4*sin(time*0.19 + 4.189);
+per_frame_12=a = 0.1 + 0.05*bass;
+
+wave_0_enabled=1
+wave_0_samples=256
+wave_0_scaling=1.0
+wave_0_smoothing=0.5
+wave_0_r=1.0
+wave_0_g=0.5
+wave_0_b=0.0
+wave_0_a=1.0
+wave_0_usedots=0
+wave_0_drawthick=1
+wave_0_additive=1
+wave_0_per_point_1=ang2 = i*6.28318 + time*0.35;
+wave_0_per_point_2=r2 = 0.38 + 0.12*sin(i*6.28318*2 + time*0.9) + sample*0.1;
+wave_0_per_point_3=x = 0.5 + r2*cos(ang2);
+wave_0_per_point_4=y = 0.5 + r2*sin(ang2);
+wave_0_per_point_5=r = 0.5 + 0.5*sin(i*6.28318*5 + time*2.3);
+wave_0_per_point_6=g = 0.5 + 0.5*sin(i*6.28318*5 + time*2.3 + 2.094);
+wave_0_per_point_7=b = 0.5 + 0.5*sin(i*6.28318*5 + time*2.3 + 4.189);
+wave_0_per_point_8=a = 0.85;
+
+wave_1_enabled=1
+wave_1_samples=256
+wave_1_scaling=1.0
+wave_1_smoothing=0.5
+wave_1_r=0.0
+wave_1_g=0.8
+wave_1_b=1.0
+wave_1_a=1.0
+wave_1_usedots=0
+wave_1_drawthick=1
+wave_1_additive=1
+wave_1_per_point_1=ang2 = i*6.28318*2 - time*0.27;
+wave_1_per_point_2=r2 = 0.22 + 0.07*cos(i*6.28318*3 + time*1.1) + sample*0.08;
+wave_1_per_point_3=x = 0.5 + r2*cos(ang2);
+wave_1_per_point_4=y = 0.5 + r2*sin(ang2);
+wave_1_per_point_5=r = 0.5 + 0.5*sin(i*6.28318*7 - time*1.8 + 4.189);
+wave_1_per_point_6=g = 0.5 + 0.5*sin(i*6.28318*7 - time*1.8);
+wave_1_per_point_7=b = 0.5 + 0.5*sin(i*6.28318*7 - time*1.8 + 2.094);
+wave_1_per_point_8=a = 0.8;
+
+shape_0_enabled=1
+shape_0_sides=8
+shape_0_additive=1
+shape_0_x=0.5
+shape_0_y=0.5
+shape_0_radius=0.06
+shape_0_r=1.0
+shape_0_g=1.0
+shape_0_b=1.0
+shape_0_a=0.6
+shape_0_r2=0.5
+shape_0_g2=0.0
+shape_0_b2=1.0
+shape_0_a2=0.0
+shape_0_per_frame_1=radius = 0.03 + 0.06*bass;
+shape_0_per_frame_2=ang = ang + 0.025;
+shape_0_per_frame_3=r = 0.5 + 0.5*sin(time*1.3);
+shape_0_per_frame_4=g = 0.5 + 0.5*sin(time*1.3 + 2.094);
+shape_0_per_frame_5=b = 0.5 + 0.5*sin(time*1.3 + 4.189);
+shape_0_per_frame_6=a = 0.4 + 0.5*bass;
