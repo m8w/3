@@ -220,6 +220,8 @@ struct VisualizerView: NSViewRepresentable {
         renderer.liveWarp  = state.liveWarp
         renderer.liveDecay = state.liveDecay
         renderer.liveGamma = state.liveGamma
+        renderer.globalBrightness = Float(state.brightness)
+        renderer.globalGamma      = Float(state.gamma)
     }
 
     func makeCoordinator() -> Coordinator {

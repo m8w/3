@@ -126,6 +126,10 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     var liveDecay: Float? = nil
     var liveGamma: Float? = nil
 
+    // Global brightness/gamma — set from Settings sliders (AppState.brightness / .gamma)
+    var globalBrightness: Float = 1.0
+    var globalGamma: Float = 1.0
+
     // FPS reporting
     var onFPSUpdate: ((Double) -> Void)?
     private var smoothedFPS: Double = 60
@@ -799,8 +803,8 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             var r: Float; var g: Float; var b: Float; var amb: Float
         }
         var cu = CompositeUniforms(
-            brightness: 1.0,
-            gamma:  uniforms.gamma,
+            brightness: globalBrightness,
+            gamma:  uniforms.gamma * globalGamma,
             videoEchoAlpha: uniforms.videoEchoAlpha,
             videoEchoZoom: uniforms.videoEchoZoom,
             videoEchoOrientation: uniforms.videoEchoOrientation,
