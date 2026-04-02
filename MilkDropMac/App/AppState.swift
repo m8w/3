@@ -21,7 +21,7 @@ class AppState: ObservableObject {
     @Published var isFullscreen: Bool = false
     @Published var isPresetLocked: Bool = false
     @Published var beatDetectionEnabled: Bool = true
-    @Published var autoSwitchInterval: Double = 15.0  // seconds
+    @Published var autoSwitchInterval: Double = 8.0   // seconds
     @Published var transitionDuration: Double = 2.5   // seconds
     @Published var hardcutEnabled: Bool = true
     @Published var hardcutSensitivity: Double = 0.5

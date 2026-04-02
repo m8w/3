@@ -67,12 +67,22 @@ struct ContentView: View {
                 }
                 .help("Previous Preset")
 
-                // Play/Pause auto-switch
-                Button(action: { state.isPresetLocked.toggle() }) {
-                    Image(systemName: state.isPresetLocked ? "lock.fill" : "play.fill")
-                        .foregroundColor(state.isPresetLocked ? .orange : .primary)
+                // Play/Pause auto-advance
+                // play.fill  = paused/locked  → click to start cycling
+                // pause.fill = playing/cycling → click to lock on current
+                Button(action: {
+                    if state.isPresetLocked {
+                        // Resume: unlock AND immediately jump to next preset
+                        state.isPresetLocked = false
+                        state.presetManager.nextPreset(transition: .smooth)
+                    } else {
+                        state.isPresetLocked = true
+                    }
+                }) {
+                    Image(systemName: state.isPresetLocked ? "play.fill" : "pause.fill")
+                        .foregroundColor(state.isPresetLocked ? .green : .primary)
                 }
-                .help(state.isPresetLocked ? "Unlock Preset" : "Lock Preset")
+                .help(state.isPresetLocked ? "Resume Auto-Cycle" : "Pause on Current Preset")
 
                 // Next
                 Button(action: { state.presetManager.nextPreset() }) {

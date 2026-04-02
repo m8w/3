@@ -257,16 +257,16 @@ fragment float4 composite_fragment(
     color.rgb = mix(color.rgb, waves.rgb, waves.a);
     color.rgb = mix(color.rgb, shapes.rgb, shapes.a);
 
-    // Minimum-brightness glow: prevents the feedback loop from converging to complete
-    // black when decay*gamma < 1. Cycles slowly through the full rainbow so any
-    // preset without enough wave content still has something alive and colourful.
-    // Kept intentionally faint (0.012) so bright presets barely notice it.
+    // Minimum-brightness glow: ensures the feedback loop never converges to black
+    // when decay*gamma < 1.  With glow=0.035 the steady-state brightness is
+    // 0.035/(1-decay*gamma) which saturates for all typical preset parameters.
+    // Uses fully-saturated HSV rainbow (max(sin,0)*2 pushes toward 0 or 1, not 0.5).
     float3 glowCol = float3(
-        0.5 + 0.5 * sin(u.time * 0.29),
-        0.5 + 0.5 * sin(u.time * 0.29 + 2.094),
-        0.5 + 0.5 * sin(u.time * 0.29 + 4.189)
+        clamp(sin(u.time * 0.31)       * 1.8, 0.0, 1.0),
+        clamp(sin(u.time * 0.31 + 2.094) * 1.8, 0.0, 1.0),
+        clamp(sin(u.time * 0.31 + 4.189) * 1.8, 0.0, 1.0)
     );
-    color.rgb += glowCol * 0.012;
+    color.rgb += glowCol * 0.035;
 
     // Fractal stream overlay (additive blend for glow effect)
     if (u.fractalEnabled != 0) {
