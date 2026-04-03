@@ -822,7 +822,6 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
                     Float,Float,Float,Float,Float,Float,Float,Float)
             var fractalBlend: Float
             var fractalEnabled: Int32
-            var r: Float; var g: Float; var b: Float; var amb: Float
         }
         var cu = CompositeUniforms(
             videoEchoAlpha: uniforms.videoEchoAlpha,
@@ -834,8 +833,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             treble: uniforms.treble,
             q: uniforms.q,
             fractalBlend: fractalBlend,
-            fractalEnabled: fractalEnabled ? 1 : 0,
-            r: uniforms.r, g: uniforms.g, b: uniforms.b, amb: uniforms.amb
+            fractalEnabled: fractalEnabled ? 1 : 0
         )
 
         enc.setFragmentBytes(&cu, length: MemoryLayout<CompositeUniforms>.stride, index: 0)
