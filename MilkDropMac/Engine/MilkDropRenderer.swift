@@ -572,7 +572,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             var smoothing: Float; var sampleCount: Int32; var perPointColors: Int32
         }
         var wu = WaveUniforms(
-            color: SIMD4<Float>(1.0, 0.9, 0.85, 0.07), thickness: halfThick * 2,
+            color: SIMD4<Float>(1.0, 0.9, 0.85, 0.55), thickness: halfThick * 2,
             drawThick: 0, additive: 0, useDots: 0,
             smoothing: 0, sampleCount: Int32(count * 2), perPointColors: 0
         )
@@ -984,7 +984,7 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             desc.colorAttachments[0].texture     = tex
             desc.colorAttachments[0].loadAction  = .clear
             desc.colorAttachments[0].storeAction = .store
-            desc.colorAttachments[0].clearColor  = MTLClearColor(red: 0.75, green: 0.15, blue: 0.45, alpha: 1)
+            desc.colorAttachments[0].clearColor  = MTLClearColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 1)
             guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { continue }
             enc.endEncoding()
         }

@@ -106,15 +106,24 @@ fragment float4 warp_fragment(
     // Translation
     uvCentered += float2(u.dx, u.dy) * 2.0;
 
-    // Warp (psychedelic swirling distortion)
-    float warpAmt = u.warp;
-    float t = u.time * u.warpSpeed * 0.5;
-    float warpX = sin(t * 1.11 + uvCentered.y * 3.0) * warpAmt * 0.03;
-    float warpY = cos(t * 0.93 + uvCentered.x * 2.5) * warpAmt * 0.03;
-    uvCentered += float2(warpX, warpY);
-
-    // Un-center
+    // Un-center back to 0..1 UV space
     float2 sampleUV = uvCentered / float2(u.aspect, 1.0) + float2(u.cx, u.cy);
+
+    // Warp distortion — projectM/MilkDrop 4-coefficient formula applied in UV space.
+    // Four slowly-evolving coefficients drive two perpendicular sine waves each axis.
+    float warpAmt = u.warp;
+    float t1 = u.time * u.warpSpeed;
+    float4 wf;
+    wf.x = sin(t1 * 1.413 + 3.681);
+    wf.y = cos(t1 * 1.731 - 1.869);
+    wf.z = sin(t1 * 2.197 + 0.292);
+    wf.w = cos(t1 * 0.792 - 3.141);
+    float2 warpOffset;
+    warpOffset.x = warpAmt * 0.0035 * (wf.x * sin(t1 * 0.53  + 3.0 * sampleUV.y) +
+                                        wf.y * cos(t1 * 0.87  + 2.5 * sampleUV.x));
+    warpOffset.y = warpAmt * 0.0035 * (wf.z * cos(t1 * 0.67  - 4.0 * sampleUV.x) +
+                                        wf.w * sin(t1 * 1.09  + 3.0 * sampleUV.y + 0.5));
+    sampleUV += warpOffset;
 
     // Sample feedback texture
     float4 color = prev.sample(tex_sampler, sampleUV);
@@ -252,21 +261,14 @@ fragment float4 composite_fragment(
     float4 waves = waveTex.sample(s, uv);
     float4 shapes = shapeTex.sample(s, uv);
 
-    // Composite: warp base + additive waves + shapes
+    // Composite: warp base then overlay waves and shapes.
+    // Waves are drawn onto a clear (black, alpha=0) texture using either standard alpha
+    // blend or additive blend per-wave.  Compositing additively here means wave light
+    // is always added on top of the feedback — matching real MilkDrop behaviour where
+    // waves glow/illuminate the darkness rather than replacing pixels.
     float4 color = warp;
-    color.rgb = mix(color.rgb, waves.rgb, waves.a);
-    color.rgb = mix(color.rgb, shapes.rgb, shapes.a);
-
-    // Minimum-brightness glow: ensures the feedback loop never converges to black
-    // when decay*gamma < 1.  With glow=0.035 the steady-state brightness is
-    // 0.035/(1-decay*gamma) which saturates for all typical preset parameters.
-    // Uses fully-saturated HSV rainbow (max(sin,0)*2 pushes toward 0 or 1, not 0.5).
-    float3 glowCol = float3(
-        clamp(sin(u.time * 0.31)       * 1.8, 0.0, 1.0),
-        clamp(sin(u.time * 0.31 + 2.094) * 1.8, 0.0, 1.0),
-        clamp(sin(u.time * 0.31 + 4.189) * 1.8, 0.0, 1.0)
-    );
-    color.rgb += glowCol * 0.035;
+    color.rgb += waves.rgb;                                    // additive wave overlay
+    color.rgb = mix(color.rgb, shapes.rgb, shapes.a);          // shapes use alpha blend
 
     // Fractal stream overlay (additive blend for glow effect)
     if (u.fractalEnabled != 0) {
@@ -280,9 +282,11 @@ fragment float4 composite_fragment(
         color.rgb += float3(u.r, u.g, u.b) * u.amb;
     }
 
-    // Gamma (MilkDrop fGammaAdj): simple brightness multiplier, NOT a power curve.
-    // Higher gamma = brighter image. Applied once here, never in the warp pass.
-    color.rgb *= u.gamma;
+    // Gamma (MilkDrop fGammaAdj): power-curve lift, identical to projectM.
+    // pow(x, 1/gamma) with gamma>1 lifts shadows and saturates midtones — this is
+    // what gives MilkDrop its characteristic neon-on-black look.
+    // Clamp to avoid NaN from negative values before pow().
+    color.rgb = pow(max(color.rgb, float3(0.0)), float3(1.0 / max(u.gamma, 0.001)));
     color.rgb *= u.brightness;
 
     // Vignette (subtle)
