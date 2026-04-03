@@ -80,7 +80,8 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
     var compositePipeline: MTLRenderPipelineState?
     var blendPipeline:     MTLRenderPipelineState?
     var fractalPipeline:   MTLRenderPipelineState?
-    var copyPipeline:      MTLRenderPipelineState?
+    var copyPipeline:      MTLRenderPipelineState?  // plain copy (used internally)
+    var displayPipeline:   MTLRenderPipelineState?  // gamma+brightness to screen
 
     // Framebuffers
     var warpTextureA: MTLTexture?   // Ping-pong feedback buffers
@@ -220,10 +221,16 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             blending: true
         )
 
-        // Present pipeline: copy finalTexture to drawable via render pass
+        // Plain copy pipeline (internal use: transition snapshots, renderCopy)
         copyPipeline = makePipeline(
             vertex: quad,
             fragment: lib.makeFunction(name: "copy_fragment"),
+            pixelFormat: .bgra8Unorm
+        )
+        // Display pipeline: applies gamma + brightness as final transform before screen
+        displayPipeline = makePipeline(
+            vertex: quad,
+            fragment: lib.makeFunction(name: "display_fragment"),
             pixelFormat: .bgra8Unorm
         )
     }
@@ -408,11 +415,17 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             cmdBuf.commit()
             return
         }
-        if let pipeline = copyPipeline {
+        if let pipeline = displayPipeline {
             let desc = makeRenderPassDesc(drawTex)
             if let enc = cmdBuf.makeRenderCommandEncoder(descriptor: desc) {
                 enc.setRenderPipelineState(pipeline)
                 enc.setFragmentTexture(finalTexture, index: 0)
+                struct DisplayUniforms { var gamma: Float; var brightness: Float }
+                var du = DisplayUniforms(
+                    gamma: uniforms.gamma * globalGamma,
+                    brightness: globalBrightness
+                )
+                enc.setFragmentBytes(&du, length: MemoryLayout<DisplayUniforms>.stride, index: 0)
                 drawQuad(enc: enc)
                 enc.endEncoding()
             }
@@ -789,8 +802,10 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: desc) else { return }
         enc.setRenderPipelineState(pipeline)
 
+        // Gamma/brightness are NOT in CompositeUniforms — they are display-only
+        // transforms applied in the display pass (display_fragment), not here.
+        // Including them in the feedback composite would compound gamma every frame.
         struct CompositeUniforms {
-            var brightness: Float; var gamma: Float
             var videoEchoAlpha: Float; var videoEchoZoom: Float; var videoEchoOrientation: Int32
             var resolution: SIMD2<Float>; var time: Float; var bass: Float; var treble: Float
             var q: (Float,Float,Float,Float,Float,Float,Float,Float,
@@ -799,12 +814,9 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
                     Float,Float,Float,Float,Float,Float,Float,Float)
             var fractalBlend: Float
             var fractalEnabled: Int32
-            // Per-frame color overlay (r,g,b from equations, amb = strength)
             var r: Float; var g: Float; var b: Float; var amb: Float
         }
         var cu = CompositeUniforms(
-            brightness: globalBrightness,
-            gamma:  uniforms.gamma * globalGamma,
             videoEchoAlpha: uniforms.videoEchoAlpha,
             videoEchoZoom: uniforms.videoEchoZoom,
             videoEchoOrientation: uniforms.videoEchoOrientation,

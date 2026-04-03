@@ -225,11 +225,9 @@ fragment float4 shape_fragment(
     return in.color;
 }
 
-// MARK: - Composite pass (final output)
+// MARK: - Composite pass (linear — no gamma/brightness; those are display-only transforms)
 
 struct CompositeUniforms {
-    float brightness;
-    float gamma;
     float videoEchoAlpha;
     float videoEchoZoom;
     int   videoEchoOrientation;
@@ -277,22 +275,41 @@ fragment float4 composite_fragment(
     }
 
     // Per-frame color overlay: r,g,b set by EEL per-frame equations, amb is strength.
-    // Additive so bright presets glow with the animated palette. Skipped when amb==0.
+    // Applied in linear space so it participates correctly in the feedback loop.
     if (u.amb > 0.0) {
         color.rgb += float3(u.r, u.g, u.b) * u.amb;
     }
 
-    // Gamma (MilkDrop fGammaAdj): power-curve lift, identical to projectM.
-    // pow(x, 1/gamma) with gamma>1 lifts shadows and saturates midtones — this is
-    // what gives MilkDrop its characteristic neon-on-black look.
-    // Clamp to avoid NaN from negative values before pow().
+    // Output in LINEAR space — gamma and brightness are applied in the display pass
+    // (display_fragment) so they are NOT part of the feedback loop.  If gamma were
+    // applied here it would compound every frame: pow(pow(x,0.5)*0.98, 0.5) > x for
+    // x < 0.98, causing the entire screen to drift to near-white (gray) within seconds.
+    return saturate(color);
+}
+
+// MARK: - Display pass: gamma + brightness applied once before showing to screen
+// This is the final transform and must NOT be part of the feedback loop.
+
+struct DisplayUniforms {
+    float gamma;
+    float brightness;
+};
+
+fragment float4 display_fragment(
+    VertexOut in                    [[stage_in]],
+    texture2d<float> src            [[texture(0)]],
+    constant DisplayUniforms &u     [[buffer(0)]]
+) {
+    constexpr sampler s(address::clamp_to_edge, filter::linear);
+    float4 color = src.sample(s, in.texcoord);
+
+    // MilkDrop fGammaAdj: pow(x, 1/gamma) lifts shadows → neon-on-black look.
     color.rgb = pow(max(color.rgb, float3(0.0)), float3(1.0 / max(u.gamma, 0.001)));
     color.rgb *= u.brightness;
 
-    // Vignette (subtle)
-    float2 c = uv - 0.5;
-    float vignette = 1.0 - dot(c, c) * 0.5;
-    color.rgb *= vignette;
+    // Subtle vignette
+    float2 c = in.texcoord - 0.5;
+    color.rgb *= 1.0 - dot(c, c) * 0.5;
 
     return saturate(color);
 }

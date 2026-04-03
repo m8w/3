@@ -238,19 +238,28 @@ enum PresetParser {
 
         // Build wave objects
         for (idx, dict) in waveDict {
+            // Helper: try multiple key variants (real presets use bEnabled, nSamples, fR, etc.)
+            func ival(_ keys: String...) -> Int? {
+                for k in keys { if let v = dict[k].flatMap({ Int($0) }) { return v } }
+                return nil
+            }
+            func fval(_ keys: String...) -> Float? {
+                for k in keys { if let v = dict[k].flatMap({ Float($0) }) { return v } }
+                return nil
+            }
             var w = PresetWave(id: idx)
-            w.enabled  = dict["enabled"].flatMap { Int($0) } == 1
-            w.samples  = dict["samples"].flatMap { Int($0) } ?? 512
-            w.sep      = dict["sep"].flatMap { Int($0) } ?? 0
-            w.scaling  = dict["scaling"].flatMap { Float($0) } ?? 1
-            w.smoothing = dict["smoothing"].flatMap { Float($0) } ?? 0.5
-            w.r        = dict["r"].flatMap { Float($0) } ?? 1
-            w.g        = dict["g"].flatMap { Float($0) } ?? 1
-            w.b        = dict["b"].flatMap { Float($0) } ?? 1
-            w.a        = dict["a"].flatMap { Float($0) } ?? 1
-            w.useDots      = dict["usedots"].flatMap { Int($0) } == 1
-            w.drawThick    = dict["drawthick"].flatMap { Int($0) } == 1
-            w.additive     = dict["additive"].flatMap { Int($0) } == 1
+            w.enabled   = ival("enabled",  "benabled",   "nenabled")  == 1
+            w.samples   = ival("samples",  "nsamples")                ?? 512
+            w.sep       = ival("sep",      "nsep")                    ?? 0
+            w.scaling   = fval("scaling",  "fscaling")                ?? 1
+            w.smoothing = fval("smoothing","fsmoothing")              ?? 0.5
+            w.r         = fval("r",        "fr")                      ?? 1
+            w.g         = fval("g",        "fg")                      ?? 1
+            w.b         = fval("b",        "fb")                      ?? 1
+            w.a         = fval("a",        "fa")                      ?? 1
+            w.useDots   = ival("usedots",  "busedots",   "nusedots")  == 1
+            w.drawThick = ival("drawthick","bdrawthick", "ndrawthick") == 1
+            w.additive  = ival("additive", "badditive",  "nadditive")  == 1
             // Per-point equations
             var i = 1
             while let eq = dict["per_point_\(i)"] {
@@ -263,22 +272,34 @@ enum PresetParser {
 
         // Build shape objects
         for (idx, dict) in shapeDict {
+            func ival(_ keys: String...) -> Int? {
+                for k in keys { if let v = dict[k].flatMap({ Int($0) }) { return v } }
+                return nil
+            }
+            func fval(_ keys: String...) -> Float? {
+                for k in keys { if let v = dict[k].flatMap({ Float($0) }) { return v } }
+                return nil
+            }
             var s = PresetShape(id: idx)
-            s.enabled       = dict["enabled"].flatMap { Int($0) } == 1
-            s.sides         = dict["sides"].flatMap { Int($0) } ?? 4
-            s.additive      = dict["additive"].flatMap { Int($0) } == 1
-            s.thickOutline  = dict["thickoutline"].flatMap { Int($0) } == 1
-            s.textured      = dict["textured"].flatMap { Int($0) } == 1
-            s.x             = dict["x"].flatMap { Float($0) } ?? 0.5
-            s.y             = dict["y"].flatMap { Float($0) } ?? 0.5
-            s.radius        = dict["radius"].flatMap { Float($0) } ?? 0.1
-            s.ang           = dict["ang"].flatMap { Float($0) } ?? 0
-            s.tex_ang       = dict["tex_ang"].flatMap { Float($0) } ?? 0
-            s.tex_zoom      = dict["tex_zoom"].flatMap { Float($0) } ?? 1
-            s.r = dict["r"].flatMap { Float($0) } ?? 1
-            s.g = dict["g"].flatMap { Float($0) } ?? 1
-            s.b = dict["b"].flatMap { Float($0) } ?? 1
-            s.a = dict["a"].flatMap { Float($0) } ?? 1
+            s.enabled      = ival("enabled",     "benabled",      "nenabled")   == 1
+            s.sides        = ival("sides",        "nsides")                     ?? 4
+            s.additive     = ival("additive",     "badditive")                  == 1
+            s.thickOutline = ival("thickoutline", "bthickoutline")              == 1
+            s.textured     = ival("textured",     "btextured")                  == 1
+            s.x            = fval("x",            "fx")                         ?? 0.5
+            s.y            = fval("y",            "fy")                         ?? 0.5
+            s.radius       = fval("radius",       "fradius")                    ?? 0.1
+            s.ang          = fval("ang",          "fang")                       ?? 0
+            s.tex_ang      = fval("tex_ang",      "ftex_ang")                   ?? 0
+            s.tex_zoom     = fval("tex_zoom",     "ftex_zoom")                  ?? 1
+            s.r  = fval("r",  "fr")  ?? 1;  s.g  = fval("g",  "fg")  ?? 1
+            s.b  = fval("b",  "fb")  ?? 1;  s.a  = fval("a",  "fa")  ?? 1
+            s.r2 = fval("r2", "fr2") ?? 1;  s.g2 = fval("g2", "fg2") ?? 1
+            s.b2 = fval("b2", "fb2") ?? 1;  s.a2 = fval("a2", "fa2") ?? 1
+            s.border_r = fval("border_r", "fborder_r") ?? 1
+            s.border_g = fval("border_g", "fborder_g") ?? 1
+            s.border_b = fval("border_b", "fborder_b") ?? 1
+            s.border_a = fval("border_a", "fborder_a") ?? 0.5
             var i = 1
             while let eq = dict["per_frame_\(i)"] {
                 s.perFrame.append(eq)
