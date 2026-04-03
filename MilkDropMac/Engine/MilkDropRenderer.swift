@@ -664,21 +664,24 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
         )
 
         // setVertexBytes limit is 4096 bytes — use MTLBuffer for anything larger.
-        func setVtxData<T>(_ data: inout [T], index: Int) {
+        func setVtxData<T>(_ data: [T], index: Int) {
             let byteLen = data.count * MemoryLayout<T>.stride
-            if byteLen <= 4096 {
-                enc.setVertexBytes(&data, length: byteLen, index: index)
-            } else if let buf = device.makeBuffer(bytes: &data, length: byteLen, options: .storageModeShared) {
-                enc.setVertexBuffer(buf, offset: 0, index: index)
+            data.withUnsafeBytes { ptr in
+                guard let base = ptr.baseAddress else { return }
+                if byteLen <= 4096 {
+                    enc.setVertexBytes(base, length: byteLen, index: index)
+                } else if let buf = device.makeBuffer(bytes: base, length: byteLen, options: .storageModeShared) {
+                    enc.setVertexBuffer(buf, offset: 0, index: index)
+                }
             }
         }
 
         enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
 
         if wave.useDots {
-            setVtxData(&positions, index: 0)
+            setVtxData(positions, index: 0)
             if hasPerPointColors {
-                setVtxData(&colors, index: 2)
+                setVtxData(colors, index: 2)
             } else {
                 var dummy = SIMD4<Float>(wave.r, wave.g, wave.b, wave.a)
                 enc.setVertexBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
@@ -716,9 +719,9 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
 
             wu.sampleCount = Int32(ribbon.count)
             enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
-            setVtxData(&ribbon, index: 0)
+            setVtxData(ribbon, index: 0)
             if hasPerPointColors {
-                setVtxData(&ribbonColors, index: 2)
+                setVtxData(ribbonColors, index: 2)
             } else {
                 var dummy = SIMD4<Float>(wave.r, wave.g, wave.b, wave.a)
                 enc.setVertexBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
