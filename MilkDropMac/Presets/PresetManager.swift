@@ -49,14 +49,21 @@ class PresetManager: ObservableObject {
 
         var loaded: [MilkDropPreset] = []
 
-        // 1. Bundled presets
+        // 1. Built-in presets (embedded as Swift constants — always available regardless
+        //    of whether the Xcode bundle resource phase includes the Presets folder)
+        loaded.append(contentsOf: BuiltInPresets.all)
+        loadProgress = 0.2
+
+        // 2. Bundled presets (folder reference in Xcode bundle, if present)
         if let bundled = PresetManager.bundledPresetsDirectory {
             let bundledPresets = await loadPresets(from: bundled)
-            loaded.append(contentsOf: bundledPresets)
+            // Skip any that duplicate a built-in by name
+            let builtInNames = Set(BuiltInPresets.all.map { $0.name })
+            loaded.append(contentsOf: bundledPresets.filter { !builtInNames.contains($0.name) })
             loadProgress = 0.5
         }
 
-        // 2. User presets directory
+        // 3. User presets directory
         let userPresets = await loadPresets(from: PresetManager.presetsDirectory)
         loaded.append(contentsOf: userPresets)
 
