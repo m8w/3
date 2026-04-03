@@ -590,7 +590,12 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             smoothing: 0, sampleCount: Int32(count * 2), perPointColors: 0
         )
         var dummy = SIMD4<Float>(0.3, 0.75, 1.0, 0.95)
-        enc.setVertexBytes(&positions, length: positions.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
+        let posBytes = positions.count * MemoryLayout<SIMD2<Float>>.stride
+        if posBytes <= 4096 {
+            enc.setVertexBytes(&positions, length: posBytes, index: 0)
+        } else if let buf = device.makeBuffer(bytes: &positions, length: posBytes, options: .storageModeShared) {
+            enc.setVertexBuffer(buf, offset: 0, index: 0)
+        }
         enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
         enc.setVertexBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: positions.count)
@@ -658,47 +663,48 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             perPointColors: hasPerPointColors ? 1 : 0
         )
 
-        enc.setVertexBytes(&positions, length: positions.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
-        enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
-        // Always bind a color buffer at index 2; use dummy entry when not using per-point colors
-        if hasPerPointColors {
-            enc.setVertexBytes(&colors, length: colors.count * MemoryLayout<SIMD4<Float>>.stride, index: 2)
-        } else {
-            var dummy = SIMD4<Float>(wave.r, wave.g, wave.b, wave.a)
-            enc.setVertexBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
+        // setVertexBytes limit is 4096 bytes — use MTLBuffer for anything larger.
+        func setVtxData<T>(_ data: inout [T], index: Int) {
+            let byteLen = data.count * MemoryLayout<T>.stride
+            if byteLen <= 4096 {
+                enc.setVertexBytes(&data, length: byteLen, index: index)
+            } else if let buf = device.makeBuffer(bytes: &data, length: byteLen, options: .storageModeShared) {
+                enc.setVertexBuffer(buf, offset: 0, index: index)
+            }
         }
 
+        enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
+
         if wave.useDots {
+            setVtxData(&positions, index: 0)
+            if hasPerPointColors {
+                setVtxData(&colors, index: 2)
+            } else {
+                var dummy = SIMD4<Float>(wave.r, wave.g, wave.b, wave.a)
+                enc.setVertexBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
+            }
             enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: positions.count)
         } else {
-            // Expand to a thick ribbon (triangleStrip) instead of a 1-px lineStrip.
-            // Metal has no line-width support; a 1-px wave covers tiny screen area and
-            // provides almost no content for the feedback loop. A ribbon gives proper
-            // MilkDrop-style visible waveforms.
-            let halfThick: Float = wave.drawThick ? 0.006 : 0.003   // UV space
+            // Expand to a thick ribbon (triangleStrip) — Metal has no line-width API.
+            let halfThick: Float = wave.drawThick ? 0.006 : 0.003
 
             var ribbon = [SIMD2<Float>]()
             var ribbonColors = [SIMD4<Float>]()
             ribbon.reserveCapacity(positions.count * 2)
-            ribbonColors.reserveCapacity(positions.count * 2)
+            if hasPerPointColors { ribbonColors.reserveCapacity(positions.count * 2) }
 
             for i in 0..<positions.count {
                 let prev = positions[max(i - 1, 0)]
                 let curr = positions[i]
                 let next = positions[min(i + 1, positions.count - 1)]
 
-                // Average tangent for mitered joints
                 var tan = SIMD2<Float>(0, 0)
                 if i > 0                    { tan += normalize(curr - prev) }
                 if i < positions.count - 1 { tan += normalize(next - curr) }
                 let tlen = simd_length(tan)
-                let perp: SIMD2<Float>
-                if tlen > 1e-6 {
-                    let t2 = tan / tlen
-                    perp = SIMD2<Float>(-t2.y, t2.x)
-                } else {
-                    perp = SIMD2<Float>(0, 1)
-                }
+                let perp: SIMD2<Float> = tlen > 1e-6
+                    ? SIMD2<Float>(-(tan / tlen).y, (tan / tlen).x)
+                    : SIMD2<Float>(0, 1)
 
                 ribbon.append(curr + perp * halfThick)
                 ribbon.append(curr - perp * halfThick)
@@ -709,11 +715,10 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             }
 
             wu.sampleCount = Int32(ribbon.count)
-            enc.setVertexBytes(&ribbon, length: ribbon.count * MemoryLayout<SIMD2<Float>>.stride, index: 0)
             enc.setVertexBytes(&wu, length: MemoryLayout<WaveUniforms>.stride, index: 1)
+            setVtxData(&ribbon, index: 0)
             if hasPerPointColors {
-                enc.setVertexBytes(&ribbonColors,
-                                   length: ribbonColors.count * MemoryLayout<SIMD4<Float>>.stride, index: 2)
+                setVtxData(&ribbonColors, index: 2)
             } else {
                 var dummy = SIMD4<Float>(wave.r, wave.g, wave.b, wave.a)
                 enc.setVertexBytes(&dummy, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
