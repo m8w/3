@@ -473,7 +473,8 @@ class EquationEvaluator {
         env["rad"] = sqrt((xd - ucx) * (xd - ucx) + (yd - ucy) * (yd - ucy)) * 2
         env["ang"] = atan2(yd - ucy, xd - ucx)
 
-        // Pre-compute the default warp UV — identical math to warp_fragment
+        // Pre-compute the default warp UV — identical math to warp_fragment shader.
+        // Step 1: zoom / rotation / scale / translation in aspect-corrected centered space.
         var uvC = SIMD2<Double>(xd - ucx, yd - ucy) * SIMD2<Double>(asp, 1.0)
         let zoom = max(env["zoom"] ?? Double(uniforms.zoom), 0.001)
         uvC /= zoom
@@ -485,11 +486,19 @@ class EquationEvaluator {
                              env["sy"] ?? Double(uniforms.sy))
         uvC += SIMD2<Double>(env["dx"] ?? Double(uniforms.dx),
                              env["dy"] ?? Double(uniforms.dy)) * 2.0
+
+        // Step 2: convert back to 0..1 UV space, then apply the projectM 4-coefficient
+        // warp formula in that space — matching warp_fragment exactly.
+        var sampleUV = uvC / SIMD2<Double>(asp, 1.0) + SIMD2<Double>(ucx, ucy)
         let warpAmt = env["warp"] ?? Double(uniforms.warp)
-        let t = Double(uniforms.time * uniforms.warpSpeed) * 0.5
-        uvC.x += sin(t * 1.11 + uvC.y * 3.0) * warpAmt * 0.03
-        uvC.y += cos(t * 0.93 + uvC.x * 2.5) * warpAmt * 0.03
-        let defaultUV = uvC / SIMD2<Double>(asp, 1.0) + SIMD2<Double>(ucx, ucy)
+        let t1 = Double(uniforms.time * uniforms.warpSpeed)
+        let wf0 = sin(t1 * 1.413 + 3.681), wf1 = cos(t1 * 1.731 - 1.869)
+        let wf2 = sin(t1 * 2.197 + 0.292), wf3 = cos(t1 * 0.792 - 3.141)
+        sampleUV.x += warpAmt * 0.0035 * (wf0 * sin(t1 * 0.53 + 3.0 * sampleUV.y)
+                                         + wf1 * cos(t1 * 0.87 + 2.5 * sampleUV.x))
+        sampleUV.y += warpAmt * 0.0035 * (wf2 * cos(t1 * 0.67 - 4.0 * sampleUV.x)
+                                         + wf3 * sin(t1 * 1.09 + 3.0 * sampleUV.y + 0.5))
+        let defaultUV = sampleUV
 
         // Seed x,y with the default warp result; equations can modify from here
         env["x"] = defaultUV.x
