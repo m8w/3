@@ -495,7 +495,11 @@ vertex VertexOut mesh_vertex(
 ) {
     MeshVertex v = vertices[vid];
     VertexOut out;
-    out.position = float4(v.screenPos * 2.0 - 1.0, 0, 1);
+    // Convert screen-space 0..1 to Metal NDC -1..+1.
+    // Y must be flipped: screen y=0 (top) → NDC y=+1 (top), screen y=1 (bottom) → NDC y=-1.
+    out.position = float4(v.screenPos.x * 2.0 - 1.0,
+                          1.0 - v.screenPos.y * 2.0,
+                          0, 1);
     out.texcoord = v.sampleUV;
     out.color    = float4(1);
     return out;

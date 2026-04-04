@@ -157,7 +157,12 @@ class PresetManager: ObservableObject {
         // Lazy-load preset data from disk if not yet read
         var loaded = preset
         if loaded.data.isEmpty, let url = loaded.url {
-            loaded.data = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            // Try UTF-8 first; fall back to Windows-1252 / Latin-1 for classic
+            // MilkDrop preset packs created on Windows (very common in the wild).
+            loaded.data = (try? String(contentsOf: url, encoding: .utf8))
+                ?? (try? String(contentsOf: url, encoding: .windowsCP1252))
+                ?? (try? String(contentsOf: url, encoding: .isoLatin1))
+                ?? ""
         }
         currentPreset = loaded
     }
