@@ -248,7 +248,7 @@ enum PresetParser {
                 return nil
             }
             var w = PresetWave(id: idx)
-            w.enabled   = ival("enabled",  "benabled",   "nenabled")  == 1
+            w.enabled   = (ival("enabled", "benabled", "nenabled") ?? 1) != 0
             w.samples   = ival("samples",  "nsamples")                ?? 512
             w.sep       = ival("sep",      "nsep")                    ?? 0
             w.scaling   = fval("scaling",  "fscaling")                ?? 1

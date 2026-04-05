@@ -156,7 +156,7 @@ vertex VertexOut wave_vertex(
 ) {
     VertexOut out;
     float2 pos = positions[vid];
-    out.position = float4(pos * 2.0 - 1.0, 0, 1);
+    out.position = float4(pos.x * 2.0 - 1.0, 1.0 - pos.y * 2.0, 0, 1);
     out.texcoord = pos;
     out.color    = wave.perPointColors != 0 ? colors[vid] : wave.color;
     return out;
@@ -191,7 +191,7 @@ vertex VertexOut shape_vertex(
 ) {
     VertexOut out;
     float2 pos = positions[vid];
-    out.position = float4(pos * 2.0 - 1.0, 0, 1);
+    out.position = float4(pos.x * 2.0 - 1.0, 1.0 - pos.y * 2.0, 0, 1);
 
     if (shape.textured != 0) {
         // Compute texture UV: rotate offset from center by tex_ang, scale by tex_zoom
@@ -534,8 +534,9 @@ vertex VertexOut spectrum_vertex(
     constant float4 *colors         [[buffer(1)]]
 ) {
     VertexOut out;
-    out.position = float4(positions[vid] * 2.0 - 1.0, 0, 1);
-    out.texcoord = positions[vid];
+    float2 p = positions[vid];
+    out.position = float4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0, 1);
+    out.texcoord = p;
     out.color    = colors[vid];
     return out;
 }
