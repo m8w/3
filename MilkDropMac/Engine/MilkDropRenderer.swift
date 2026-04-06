@@ -420,10 +420,14 @@ class MilkDropRenderer: NSObject, MTKViewDelegate {
             if let enc = cmdBuf.makeRenderCommandEncoder(descriptor: desc) {
                 enc.setRenderPipelineState(pipeline)
                 enc.setFragmentTexture(finalTexture, index: 0)
-                struct DisplayUniforms { var gamma: Float; var brightness: Float }
+                struct DisplayUniforms {
+                    var gamma: Float; var brightness: Float
+                    var r: Float; var g: Float; var b: Float; var a: Float
+                }
                 var du = DisplayUniforms(
                     gamma: uniforms.gamma * globalGamma,
-                    brightness: globalBrightness
+                    brightness: globalBrightness,
+                    r: uniforms.r, g: uniforms.g, b: uniforms.b, a: uniforms.amb
                 )
                 enc.setFragmentBytes(&du, length: MemoryLayout<DisplayUniforms>.stride, index: 0)
                 drawQuad(enc: enc)

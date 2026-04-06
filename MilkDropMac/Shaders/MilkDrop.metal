@@ -263,6 +263,18 @@ fragment float4 composite_fragment(
     // is always added on top of the feedback — matching real MilkDrop behaviour where
     // waves glow/illuminate the darkness rather than replacing pixels.
     float4 color = warp;
+
+    // Video echo: a semi-transparent zoomed/flipped copy of the warp frame blended in.
+    // This IS part of the feedback loop (composite feeds back into next warp) — which is
+    // correct: the echo should persist and evolve just like the main image.
+    if (u.videoEchoAlpha > 0.001) {
+        float2 echoUV = (uv - 0.5) / max(u.videoEchoZoom, 0.001) + 0.5;
+        if (u.videoEchoOrientation == 1 || u.videoEchoOrientation == 3) echoUV.x = 1.0 - echoUV.x;
+        if (u.videoEchoOrientation == 2 || u.videoEchoOrientation == 3) echoUV.y = 1.0 - echoUV.y;
+        float4 echo = warpTex.sample(s, echoUV);
+        color.rgb = mix(color.rgb, color.rgb + echo.rgb, u.videoEchoAlpha);
+    }
+
     color.rgb += waves.rgb;                                    // additive wave overlay
     color.rgb = mix(color.rgb, shapes.rgb, shapes.a);          // shapes use alpha blend
 
@@ -285,6 +297,9 @@ fragment float4 composite_fragment(
 struct DisplayUniforms {
     float gamma;
     float brightness;
+    // Per-frame color overlay (r,g,b,a from per-frame equations).
+    // Applied here — NOT in the composite/feedback path — so it never accumulates.
+    float r, g, b, a;
 };
 
 fragment float4 display_fragment(
@@ -298,6 +313,11 @@ fragment float4 display_fragment(
     // MilkDrop fGammaAdj: pow(x, 1/gamma) lifts shadows → neon-on-black look.
     color.rgb = pow(max(color.rgb, float3(0.0)), float3(1.0 / max(u.gamma, 0.001)));
     color.rgb *= u.brightness;
+
+    // Per-frame ambient color overlay (additive tint).
+    // r,g,b are the color; a is the blend strength (0=off, 1=full).
+    // Applying here keeps it out of the feedback loop — no exponential build-up.
+    color.rgb += float3(u.r * u.a, u.g * u.a, u.b * u.a);
 
     // Subtle vignette
     float2 c = in.texcoord - 0.5;
