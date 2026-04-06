@@ -453,13 +453,16 @@ class EquationEvaluator {
     // Returns the UV to sample from the previous frame for that vertex position.
     //
     // MilkDrop 2 per_pixel convention:
-    //   1. Compute the default warp UV (same transform as warp_fragment shader).
-    //   2. Seed env["x"]/env["y"] with that pre-warped position.
-    //   3. Run equations — they may further modify x and y (or just read them).
-    //   4. Return the final env["x"]/env["y"] as the sample UV.
+    //   1. Seed env["x"]/env["y"] with the SCREEN GRID position (0..1).
+    //   2. Seed env["rad"]/env["ang"] relative to warp center.
+    //   3. Run equations — they may modify zoom/rot/warp/dx/dy/sx/sy per-vertex,
+    //      and/or directly set x/y to the desired sample UV.
+    //   4. After equations, re-compute sample UV using the (possibly modified) params.
+    //      If equations directly modified x or y, those override the computed UV.
     //
-    // Old code ignored the equations' x,y output and re-applied the warp
-    // transform from scratch, making per_vertex equations completely ineffective.
+    // This matches the real MilkDrop per-pixel pipeline where equations like
+    //   zoom = zoom + 0.005*sin(x*6+time)*bass
+    // spatially vary the zoom based on screen position, producing a non-uniform warp.
     func evaluateVertex(equations: [String], x: Float, y: Float,
                         uniforms: MilkDropUniforms, audio: AudioData) -> SIMD2<Float> {
         var env = makeBaseEnv(uniforms: uniforms, audio: audio)
@@ -469,13 +472,24 @@ class EquationEvaluator {
         let ucx = env["cx"] ?? 0.5, ucy = env["cy"] ?? 0.5
         let xd = Double(x), yd = Double(y)
 
-        // Polar coords relative to warp center (available to equations)
+        // Seed screen position and polar coords — available to equations
+        env["x"]   = xd
+        env["y"]   = yd
         env["rad"] = sqrt((xd - ucx) * (xd - ucx) + (yd - ucy) * (yd - ucy)) * 2
         env["ang"] = atan2(yd - ucy, xd - ucx)
 
-        // Pre-compute the default warp UV — identical math to warp_fragment shader.
-        // Step 1: zoom / rotation / scale / translation in aspect-corrected centered space.
-        var uvC = SIMD2<Double>(xd - ucx, yd - ucy) * SIMD2<Double>(asp, 1.0)
+        // Run per-vertex equations — may modify zoom/rot/warp/dx/dy/sx/sy and/or x,y
+        for eq in equations {
+            env = runCode(eq, vars: env)
+        }
+
+        // Recompute sample UV using the (possibly per-vertex modified) warp params.
+        // This is identical to warp_fragment but uses env values over uniform values
+        // so that per-vertex parameter modifications take effect.
+        let finalCX = env["cx"] ?? ucx
+        let finalCY = env["cy"] ?? ucy
+
+        var uvC = SIMD2<Double>(xd - finalCX, yd - finalCY) * SIMD2<Double>(asp, 1.0)
         let zoom = max(env["zoom"] ?? Double(uniforms.zoom), 0.001)
         uvC /= zoom
         let rot = env["rot"] ?? Double(uniforms.rot)
@@ -487,9 +501,7 @@ class EquationEvaluator {
         uvC += SIMD2<Double>(env["dx"] ?? Double(uniforms.dx),
                              env["dy"] ?? Double(uniforms.dy)) * 2.0
 
-        // Step 2: convert back to 0..1 UV space, then apply the projectM 4-coefficient
-        // warp formula in that space — matching warp_fragment exactly.
-        var sampleUV = uvC / SIMD2<Double>(asp, 1.0) + SIMD2<Double>(ucx, ucy)
+        var sampleUV = uvC / SIMD2<Double>(asp, 1.0) + SIMD2<Double>(finalCX, finalCY)
         let warpAmt = env["warp"] ?? Double(uniforms.warp)
         let t1 = Double(uniforms.time * uniforms.warpSpeed)
         let wf0 = sin(t1 * 1.413 + 3.681), wf1 = cos(t1 * 1.731 - 1.869)
@@ -498,18 +510,8 @@ class EquationEvaluator {
                                          + wf1 * cos(t1 * 0.87 + 2.5 * sampleUV.x))
         sampleUV.y += warpAmt * 0.0035 * (wf2 * cos(t1 * 0.67 - 4.0 * sampleUV.x)
                                          + wf3 * sin(t1 * 1.09 + 3.0 * sampleUV.y + 0.5))
-        let defaultUV = sampleUV
 
-        // Seed x,y with the default warp result; equations can modify from here
-        env["x"] = defaultUV.x
-        env["y"] = defaultUV.y
-
-        for eq in equations {
-            env = runCode(eq, vars: env)
-        }
-
-        return SIMD2<Float>(Float(env["x"] ?? defaultUV.x),
-                            Float(env["y"] ?? defaultUV.y))
+        return SIMD2<Float>(Float(sampleUV.x), Float(sampleUV.y))
     }
 
     // MARK: - Private helpers

@@ -182,8 +182,13 @@ enum PresetParser {
                 params.perFrame.append(value)
                 continue
             }
-            if key == "per_frame_init_1" || key == "per_frame_init" {
-                params.perFrameInit = value
+            // Per-frame init: can span multiple lines (per_frame_init_1=, per_frame_init_2=, ...)
+            if key == "per_frame_init" || key.hasPrefix("per_frame_init_") {
+                if params.perFrameInit.isEmpty {
+                    params.perFrameInit = value
+                } else {
+                    params.perFrameInit += ";" + value
+                }
                 continue
             }
             // Per-vertex (pixel) equations
@@ -216,7 +221,8 @@ enum PresetParser {
             case "frating":            params.rating           = Float(value) ?? 3
             case "fgammadj":           params.gamma            = Float(value) ?? 1
             case "fdecay":             params.decay            = Float(value) ?? 0.98
-            case "fvideoechodecay":    params.videoEchoAlpha   = Float(value) ?? 0    // was wrongly mapped to decay
+            case "fvideoechoalpha":    params.videoEchoAlpha   = Float(value) ?? 0
+            case "fvideoechodecay":    params.videoEchoAlpha   = Float(value) ?? 0    // legacy alias
             case "fzoom":              params.zoomAmount       = Float(value) ?? 1
             case "frot":               params.rotatAmount      = Float(value) ?? 0
             case "fwarpscale":         params.warpScale        = Float(value) ?? 1
@@ -228,8 +234,8 @@ enum PresetParser {
             case "szx":                params.szx              = Float(value) ?? 1
             case "szy":                params.szy              = Float(value) ?? 1
             case "fvideoechodecayalpha", "fvideoechodecay2": params.videoEchoAlpha = Float(value) ?? 0
-            case "fvideoechodecayzoom":  params.videoEchoZoom  = Float(value) ?? 1
-            case "ivideoechodecayorientation": params.videoEchoOrientation = Int(value) ?? 0
+            case "fvideoechozoom", "fvideoechodecayzoom":  params.videoEchoZoom  = Float(value) ?? 1
+            case "ivideoechoorientation", "ivideoechodecayorientation": params.videoEchoOrientation = Int(value) ?? 0
             case "bgammadj":
                 break  // legacy
             default: break
