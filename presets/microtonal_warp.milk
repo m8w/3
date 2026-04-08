@@ -1,0 +1,225 @@
+; microtonal_warp.milk
+; Milkdrop / Butterchurn preset designed for microtonal music.
+;
+; q1–q32 are injected by MicrotonalFFT.swift (one per 32 EDO-spaced Hz targets).
+; They arrive normalised to [0,1] by AdaptiveNormaliser.
+;
+; Design philosophy:
+;   Adjacent-bin DIFFERENCES  (q[n]-q[n+1]) expose microtonal "shear":
+;   when a note sits between two scale degrees, both bins fire but one wins.
+;   That differential drives asymmetric motion — the field literally tilts
+;   toward whichever pitch is louder.  This is invisible in 12-TET presets.
+;
+; Band layout (matches makeEDOFrequencies default, stride=3, 31-EDO base):
+;   q1 – q8   : sub-bass → low-mid  (≈ 55 – 350 Hz)
+;   q9 – q16  : mid                 (≈ 350 – 1400 Hz)
+;   q17 – q24 : upper-mid           (≈ 1400 – 4500 Hz)
+;   q25 – q32 : presence → air      (≈ 4500 – 16000 Hz)
+
+[preset00]
+fRating=5.000000
+fGammaAdj=1.700000
+fDecay=0.970000
+fVideoEchoZoom=2.000000
+fVideoEchoAlpha=0.000000
+nVideoEchoOrientation=0
+nWaveMode=0
+bAdditiveWaves=1
+bWaveDots=0
+bWaveThick=1
+bModWaveAlphaByVolume=1
+bMaximizeWaveColor=0
+bTexWrap=1
+bDarkenCenter=0
+bRedBlueStereo=0
+bBrighten=0
+bDarken=0
+bSolarize=0
+bInvert=0
+fWaveAlpha=0.800000
+fWaveScale=1.000000
+fWaveSmoothing=0.750000
+fWaveParam=-1.000000
+fWarpAnimSpeed=1.000000
+fWarpScale=1.330000
+fZoomExponent=1.000000
+fShader=0.000000
+zoom=1.000000
+rot=0.000000
+cx=0.500000
+cy=0.500000
+dx=0.000000
+dy=0.000000
+warp=1.000000
+sx=1.000000
+sy=1.000000
+wave_r=0.500000
+wave_g=0.500000
+wave_b=0.500000
+wave_x=0.500000
+wave_y=0.500000
+ob_size=0.010000
+ib_size=0.010000
+nMotionVectorsX=12.000000
+nMotionVectorsY=9.000000
+mv_l=0.900000
+
+; ─────────────────────────────────────────────────────────────────────────────
+; INIT — runs once when the preset loads.
+; Seed all smoothed variables so the first frame isn't a cold start.
+; ─────────────────────────────────────────────────────────────────────────────
+per_frame_init_1=low=0; mlo=0; mhi=0; high=0;
+per_frame_init_2=centroid=0.5; flux_lo=0; flux_hi=0;
+per_frame_init_3=low_att=0; high_att=0; mid_att=0; spin_acc=0;
+
+; ─────────────────────────────────────────────────────────────────────────────
+; PER-FRAME — executed once per frame on the CPU / JS side.
+;
+; Naming convention used throughout:
+;   _att  = IIR-smoothed (attack/release filter)
+;   flux_ = frame-to-frame energy change (transient detector)
+;   dq_   = adjacent-bin difference (microtonal shear signal)
+; ─────────────────────────────────────────────────────────────────────────────
+
+; ── Band sums (normalise by 1/8 so each band lives in [0,1]) ─────────────────
+per_frame_1=low  = (q1+q2+q3+q4+q5+q6+q7+q8)   * 0.125;
+per_frame_2=mlo  = (q9+q10+q11+q12+q13+q14+q15+q16) * 0.125;
+per_frame_3=mhi  = (q17+q18+q19+q20+q21+q22+q23+q24) * 0.125;
+per_frame_4=high = (q25+q26+q27+q28+q29+q30+q31+q32) * 0.125;
+
+; ── IIR smoothing — fast attack (0.35), slow release (0.75) ──────────────────
+; This mimics Milkdrop's bass_att/treb_att behaviour but for our 4 custom bands.
+per_frame_5=low_att  = low_att  * 0.75 + low  * 0.25;
+per_frame_6=mid_att  = mid_att  * 0.78 + mlo  * 0.22 + mhi * 0.10;
+per_frame_7=high_att = high_att * 0.65 + high * 0.35;
+
+; ── Spectral centroid ─────────────────────────────────────────────────────────
+; Weighted-average band index (0=all-low, 1=all-high).
+; High centroid: energy is in the upper bins (bright, airy sound).
+; Low centroid: energy is in fundamentals (thick, bass-heavy).
+per_frame_8=_denom   = low + mlo + mhi + high + 0.001;
+per_frame_9=centroid = (low*0.125 + mlo*0.375 + mhi*0.625 + high*0.875) / _denom;
+
+; ── Spectral flux (transient detector) ───────────────────────────────────────
+; |q[n] - q[n+1]| across each 4-bin group.  Spikes when energy moves between
+; adjacent microtonal degrees — i.e., when a pitch bends or slides.
+per_frame_10=flux_lo = abs(q1-q2) + abs(q3-q4) + abs(q5-q6) + abs(q7-q8);
+per_frame_11=flux_hi = abs(q25-q26) + abs(q27-q28) + abs(q29-q30) + abs(q31-q32);
+per_frame_12=flux_mid= abs(q12-q13) + abs(q14-q15) + abs(q20-q21) + abs(q22-q23);
+
+; ── Adjacent-bin differential signals ────────────────────────────────────────
+; The heart of the microtonal design.  When a pitch sits between two bins the
+; sign of dq tells us which degree it leans toward.  Combined pairs drive
+; orthogonal motion so no two scale relationships move in the same direction.
+per_frame_13=dq_lo   = (q8  - q9)  ;  ; low↔mid  boundary shear
+per_frame_14=dq_mid  = (q16 - q17) ;  ; mid↔hi   boundary shear
+per_frame_15=dq_hi   = (q20 - q21) ;  ; upper-mid internal shear
+per_frame_16=dq_air  = (q28 - q29) ;  ; presence↔air shear
+
+; ── Cumulative spin — integrates rotation driven by microtonal shear ──────────
+; dq_lo is the dominant low-frequency differential.  Rotating by its sign
+; makes the field spin CW/CCW depending on which side of the interval fires.
+per_frame_17=spin_acc = spin_acc * 0.92 + dq_lo * 0.08;
+
+; ─── Global visual parameters ────────────────────────────────────────────────
+
+; DECAY: let loud bass frames linger slightly less (faster burn-in).
+per_frame_18=decay = 0.965 - low_att * 0.018;
+
+; ZOOM: low energy pushes the tunnel inward; highs create outward flash.
+per_frame_19=zoom = 1.0 + low_att * 0.055 - high_att * 0.025;
+
+; ROTATION: persistent spin from accumulated shear + centroid-modulated drift.
+; A high-centroid sound (lots of highs) rotates faster.
+per_frame_20=rot = spin_acc * 0.4 + centroid * 0.015 * sin(time * 0.7);
+
+; WARP: q1 is the core spatial warp (broad); q32 adds fine shimmer.
+; flux_hi spikes on transients and kicks in extra warp briefly.
+per_frame_21=warp = 0.80 + q1 * 0.20 + q32 * 0.15 + flux_hi * 1.20;
+
+; TRANSLATION: adjacent-bin differentials drive X/Y drift.
+; dq_lo → horizontal drift;  dq_hi → vertical drift.
+per_frame_22=dx = dq_lo * 0.012 + dq_air * 0.005 * sin(time * 1.1);
+per_frame_23=dy = dq_hi * 0.012 + dq_mid * 0.005 * cos(time * 0.9);
+
+; WAVE COLORS: spectral probes — one from each quadrant of the 32-bin array.
+; q5  ≈ low-mid fundamental probe  → red channel
+; q15 ≈ mid probe                  → green channel
+; q25 ≈ presence probe             → blue channel
+; Centroid biases the overall hue: high centroid tilts toward cyan/blue.
+per_frame_24=wave_r = q5  * (1.0 - centroid * 0.5);
+per_frame_25=wave_g = q15 * (0.5 + centroid * 0.5);
+per_frame_26=wave_b = q25 * (0.3 + centroid * 0.7);
+
+; WAVE GEOMETRY
+per_frame_27=wave_x     = 0.5 + dq_lo * 0.15;       ; orbit horizontally with shear
+per_frame_28=wave_y     = 0.5 + dq_hi * 0.15;       ; orbit vertically  with shear
+per_frame_29=wave_scale = 0.7 + high_att * 1.3;      ; highs → bigger waveform
+per_frame_30=wave_a     = 0.5 + mid_att  * 0.5;      ; mid energy controls opacity
+
+; ─────────────────────────────────────────────────────────────────────────────
+; PER-PIXEL — compiled to GLSL by Butterchurn, runs on GPU for every pixel.
+;
+; Available read-only: x, y (normalised coords), rad (radius), ang (angle),
+;                      time, all per_frame vars above, all q1–q32.
+; Write to: zoom, rot, warp, dx, dy, cx, cy, sx, sy.
+; ─────────────────────────────────────────────────────────────────────────────
+
+; ── Layer 1: broad low-frequency warp ────────────────────────────────────────
+; q1 (lowest probe) bends space with a large slow sine ripple.
+; The factor `rad` makes the effect stronger at the edges — classic Milkdrop.
+per_pixel_1=warp = warp + q1 * 0.10 * sin(rad * 2.5 + time * 0.4);
+
+; ── Layer 2: mid-frequency angular distortion ────────────────────────────────
+; q16/q17 are the bins straddling the mid↔high-mid boundary.
+; Multiplying by `ang` creates a spiral-shaped warp field.
+per_pixel_2=warp = warp + (q16 + q17) * 0.06 * cos(ang * 3.0 + time * 0.9);
+
+; ── Layer 3: fine high-frequency shimmer ─────────────────────────────────────
+; q32 (highest probe) adds pixel-scale noise at the edges.
+; `rad*rad` focuses the effect in the outer ring.
+per_pixel_3=warp = warp + q32 * 0.08 * sin(x * 14.0 + y * 14.0 + time * 2.5) * rad * rad;
+
+; ── Per-pixel zoom pulse ──────────────────────────────────────────────────────
+; Low-energy radial zoom: puffs the centre out on bass hits.
+per_pixel_4=zoom = zoom + low_att * rad * 0.06;
+
+; ── Per-pixel rotation ────────────────────────────────────────────────────────
+; Flux transients create a momentary angular kick in addition to the
+; steady spin_acc already set per-frame.
+per_pixel_5=rot = rot + flux_hi * 0.08 * sin(rad * 4.0);
+
+; ── Microtonal shear field ───────────────────────────────────────────────────
+; dq_lo / dq_hi encode which side of a microtonal interval is louder.
+; Multiplied by sin/cos of `ang` they create an asymmetric swirl —
+; the visual "leans" toward whichever pitch is winning.
+per_pixel_6=dx = dx + dq_lo * sin(ang) * 0.010 + q1 * sin(rad * 2.0 + time * 0.3) * 0.020;
+per_pixel_7=dy = dy + dq_hi * cos(ang) * 0.010 + q2 * cos(rad * 2.0 + time * 0.3) * 0.020;
+
+; ── Mid-bin cross-axis interference ──────────────────────────────────────────
+; q16 vs q17 (mid boundary) and q20 vs q21 (upper-mid) drive perpendicular
+; ripples.  When both fire equally (unison / octave) they cancel and the
+; field is still.  When one wins (a bent or mistuned note) it kicks.
+per_pixel_8=dx = dx + (q8 - q9)   * 0.010;
+per_pixel_9=dy = dy + (q20 - q21) * 0.010;
+
+; ── High-frequency detail displacement ───────────────────────────────────────
+; Very fine spatial modulation from the top two bins.
+per_pixel_10=dx = dx + q32 * sin(x * 18.0 + time * 3.2) * 0.006;
+per_pixel_11=dy = dy + q31 * cos(y * 18.0 + time * 3.2) * 0.006;
+
+; ─────────────────────────────────────────────────────────────────────────────
+; WAVEFORM — a Lissajous-style scope driven by the differential signals.
+; wave_x/y are already moving (set in per_frame); here we modulate the
+; per-point colour so the waveform flashes on spectral transients.
+; ─────────────────────────────────────────────────────────────────────────────
+wave_1_per_frame_1=wave_r = wave_r + flux_hi * 0.6;
+wave_1_per_frame_2=wave_g = wave_g + flux_mid * 0.4;
+wave_1_per_frame_3=wave_b = wave_b;
+
+; Per-point: colour the individual scope samples by their X position so the
+; wave cycles through the current RGB palette as it scrolls.
+wave_1_per_point_1=r = wave_r * (0.5 + 0.5 * sin(sample * 6.28318 + time));
+wave_1_per_point_2=g = wave_g * (0.5 + 0.5 * sin(sample * 6.28318 + time + 2.094));
+wave_1_per_point_3=b = wave_b * (0.5 + 0.5 * sin(sample * 6.28318 + time + 4.189));
+wave_1_per_point_4=a = wave_a;
