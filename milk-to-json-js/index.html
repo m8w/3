@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<!--
+  index.html  —  Drag-and-drop .milk → JSON converter
+  Open this file directly in any browser — no server, no install.
+  Drag one or many .milk files onto the page to convert them.
+  Click any result to download the .json file.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>.milk → Butterchurn JSON</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    min-height: 100vh;
+    background: #0d0d0f;
+    color: #e0e0e0;
+    font: 14px/1.6 'SF Mono', 'Menlo', 'Consolas', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px;
+    gap: 28px;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #fff;
+  }
+  h1 span { color: #7c6af7; }
+
+  /* ── Drop zone ──────────────────────────────────────────────────────────── */
+  #drop {
+    width: min(640px, 100%);
+    border: 2px dashed #333;
+    border-radius: 14px;
+    padding: 48px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.18s, background 0.18s;
+    color: #666;
+  }
+  #drop.over {
+    border-color: #7c6af7;
+    background: rgba(124,106,247,0.07);
+    color: #aaa;
+  }
+  #drop p { font-size: 15px; }
+  #drop small { font-size: 12px; color: #444; margin-top: 6px; display: block; }
+
+  /* ── Results ────────────────────────────────────────────────────────────── */
+  #results {
+    width: min(640px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .result-row {
+    background: #18181c;
+    border: 1px solid #2a2a2e;
+    border-radius: 10px;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    transition: border-color 0.15s;
+  }
+  .result-row:hover { border-color: #7c6af7; }
+  .result-row.error { border-color: #c0392b; }
+
+  .icon { font-size: 20px; flex-shrink: 0; }
+  .info { flex: 1; min-width: 0; }
+  .filename {
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .meta { font-size: 12px; color: #666; }
+  .result-row.error .meta { color: #e74c3c; }
+
+  .dl-btn {
+    background: #7c6af7;
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    padding: 7px 16px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .dl-btn:hover { background: #9a8cf9; }
+  .dl-btn:disabled { background: #333; color: #555; cursor: default; }
+
+  /* ── Batch download bar ─────────────────────────────────────────────────── */
+  #batch-bar {
+    width: min(640px, 100%);
+    display: none;
+    justify-content: flex-end;
+    gap: 12px;
+  }
+  #batch-bar.visible { display: flex; }
+  #dl-all {
+    background: #27ae60;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 22px;
+    font: inherit;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  #dl-all:hover { background: #2ecc71; }
+
+  /* ── reverse toggle ─────────────────────────────────────────────────────── */
+  #mode-bar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    font-size: 13px;
+    color: #666;
+  }
+  #mode-bar label { cursor: pointer; display: flex; gap: 6px; align-items: center; }
+  #mode-bar input { accent-color: #7c6af7; }
+</style>
+</head>
+<body>
+
+<h1><span>.milk</span> → Butterchurn <span>JSON</span></h1>
+
+<div id="mode-bar">
+  <label>
+    <input type="checkbox" id="reverse-toggle">
+    Reverse mode: <strong>.json → .milk</strong>
+  </label>
+</div>
+
+<div id="drop">
+  <p>Drop <strong>.milk</strong> files here</p>
+  <small>or click to pick files — works offline, nothing leaves your computer</small>
+  <input type="file" id="file-input" multiple accept=".milk,.json"
+         style="display:none">
+</div>
+
+<div id="batch-bar">
+  <button id="dl-all">⬇ Download all .json</button>
+</div>
+
+<div id="results"></div>
+
+<script type="module">
+import { milkToJson, jsonToMilk } from './milk-to-json.js';
+
+const drop          = document.getElementById('drop');
+const fileInput     = document.getElementById('file-input');
+const results       = document.getElementById('results');
+const batchBar      = document.getElementById('batch-bar');
+const dlAll         = document.getElementById('dl-all');
+const reverseToggle = document.getElementById('reverse-toggle');
+
+// Converted blobs for batch download.
+const converted = [];   // { filename, blob }
+
+// ── drag and drop ────────────────────────────────────────────────────────────
+
+drop.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => processFiles([...fileInput.files]));
+
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', ()  => drop.classList.remove('over'));
+drop.addEventListener('drop', e => {
+  e.preventDefault();
+  drop.classList.remove('over');
+  processFiles([...e.dataTransfer.files]);
+});
+
+// Update drop zone label when mode changes.
+reverseToggle.addEventListener('change', () => {
+  const p = drop.querySelector('p');
+  p.innerHTML = reverseToggle.checked
+    ? 'Drop <strong>.json</strong> files here'
+    : 'Drop <strong>.milk</strong> files here';
+});
+
+// ── file processing ──────────────────────────────────────────────────────────
+
+async function processFiles(files) {
+  for (const file of files) {
+    const row = makeRow(file.name);
+    results.prepend(row.el);
+
+    try {
+      const text = await file.text();
+      const isReverse = reverseToggle.checked;
+
+      let outName, blob;
+
+      if (isReverse) {
+        // JSON → .milk
+        const preset = JSON.parse(text);
+        const milk   = jsonToMilk(preset);
+        outName = file.name.replace(/\.json$/i, '.milk');
+        blob    = new Blob([milk], { type: 'text/plain' });
+      } else {
+        // .milk → JSON
+        const name   = file.name.replace(/\.milk$/i, '');
+        const preset = milkToJson(text, name);
+        const json   = JSON.stringify(preset, null, 2);
+        outName = file.name.replace(/\.milk$/i, '.json');
+        blob    = new Blob([json], { type: 'application/json' });
+      }
+
+      const url = URL.createObjectURL(blob);
+      converted.push({ filename: outName, blob });
+
+      row.setSuccess(outName, formatSize(blob.size), url);
+      batchBar.classList.add('visible');
+
+    } catch (e) {
+      row.setError(e.message);
+    }
+  }
+}
+
+// ── batch download ────────────────────────────────────────────────────────────
+
+dlAll.addEventListener('click', () => {
+  for (const { filename, blob } of converted) {
+    triggerDownload(URL.createObjectURL(blob), filename);
+  }
+});
+
+// ── DOM helpers ───────────────────────────────────────────────────────────────
+
+function makeRow(originalName) {
+  const el = document.createElement('div');
+  el.className = 'result-row';
+  el.innerHTML = `
+    <div class="icon">⏳</div>
+    <div class="info">
+      <div class="filename">${esc(originalName)}</div>
+      <div class="meta">Converting…</div>
+    </div>
+    <button class="dl-btn" disabled>Download</button>
+  `;
+
+  return {
+    el,
+    setSuccess(outName, size, url) {
+      el.querySelector('.icon').textContent   = '✅';
+      el.querySelector('.filename').textContent = outName;
+      el.querySelector('.meta').textContent   = size;
+      const btn = el.querySelector('.dl-btn');
+      btn.disabled = false;
+      btn.addEventListener('click', () => triggerDownload(url, outName));
+    },
+    setError(msg) {
+      el.classList.add('error');
+      el.querySelector('.icon').textContent  = '❌';
+      el.querySelector('.meta').textContent  = msg;
+      el.querySelector('.dl-btn').disabled   = true;
+    },
+  };
+}
+
+function triggerDownload(url, filename) {
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  a.click();
+}
+
+function formatSize(bytes) {
+  return bytes < 1024
+    ? `${bytes} B`
+    : bytes < 1024 * 1024
+      ? `${(bytes / 1024).toFixed(1)} KB`
+      : `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
