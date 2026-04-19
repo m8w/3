@@ -113,9 +113,12 @@ heat color before being additively mixed.
     |   |-- fh.audio_bins.maxpat      audio -> 8 bins
     |   |-- fh.organic_mod.maxpat     ASR + Brownian modulation (nervous system)
     |   |-- fh.archive_fetcher.maxpat SQLite + jit.movie A/B crossfader
+    |   |-- fh.archive_pair.maxpat    dual-channel fetcher (53k skin + 10k nerves)
     |-- shaders/
     |   |-- fh.inject.jxs             audio-driven source term + drift
-    |   |-- fh.video_displace.jxs     archive video as vector field
+    |   |-- fh.video_displace.jxs     archive video as vector field (legacy single-archive)
+    |   |-- fh.video_vector.jxs       Channel B -> velocity field only (nerves, 10k)
+    |   |-- fh.video_skin.jxs         Channel A -> skin/density overlay (texture, 53k)
     |   |-- fh.advect.jxs             semi-Lagrangian
     |   |-- fh.buoyancy.jxs           Boussinesq
     |   |-- fh.diffuse.jxs            viscosity + thermal

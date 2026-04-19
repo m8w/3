@@ -4,9 +4,13 @@ archive_indexer.py -- scan directories for video files, extract metadata,
 and populate a SQLite database consumed by fh.archive_fetcher in Max.
 
 Usage:
-    python3 archive_indexer.py --roots /Volumes/archive1 /Volumes/archive2 \
-        --db videos.sqlite \
-        [--workers 4] [--probe ffprobe]
+    # Channel A: 53k primary "skin/texture" source
+    python3 archive_indexer.py --roots /Volumes/channelA \
+        --db videos.sqlite --channel A --role texture --workers 6
+
+    # Channel B: 10k secondary "nerves/velocity" source
+    python3 archive_indexer.py --roots /Volumes/channelB /Volumes/channelC \
+        --db videos.sqlite --channel B --role velocity --workers 6
 
 Schema:
     videos(id INTEGER PRIMARY KEY,
@@ -52,12 +56,28 @@ CREATE TABLE IF NOT EXISTS videos (
     organic     REAL DEFAULT 0.5,
     heat_bucket INTEGER DEFAULT 0,
     brightness  REAL,
-    motion      REAL
+    motion      REAL,
+    channel     TEXT    DEFAULT '',
+    role        TEXT    DEFAULT 'texture',
+    energy      REAL    DEFAULT 0.5,
+    viscosity   REAL    DEFAULT 0.5
 );
 CREATE INDEX IF NOT EXISTS idx_videos_heat ON videos(heat_bucket);
 CREATE INDEX IF NOT EXISTS idx_videos_organic ON videos(organic);
 CREATE INDEX IF NOT EXISTS idx_videos_duration ON videos(duration);
+CREATE INDEX IF NOT EXISTS idx_videos_role ON videos(role);
+CREATE INDEX IF NOT EXISTS idx_videos_channel ON videos(channel);
+CREATE INDEX IF NOT EXISTS idx_videos_energy ON videos(energy);
+CREATE INDEX IF NOT EXISTS idx_videos_viscosity ON videos(viscosity);
 """
+
+# idempotent migration for upgrading an older db
+MIGRATE_COLS = [
+    ("channel",   "TEXT DEFAULT ''"),
+    ("role",      "TEXT DEFAULT 'texture'"),
+    ("energy",    "REAL DEFAULT 0.5"),
+    ("viscosity", "REAL DEFAULT 0.5"),
+]
 
 
 def probe(path: Path, probe_bin: str) -> dict | None:
@@ -117,6 +137,28 @@ def infer_organic(path: Path, width: int, height: int, duration: float) -> float
     return max(0.0, min(1.0, score))
 
 
+def infer_energy_viscosity(path: Path, organic: float, fps: float) -> tuple[float, float]:
+    """Rough heuristic for audio-matching columns.
+
+    energy     = how "active" the clip should be - maps to audio loudness
+    viscosity  = how "slow / syrupy" it reads - inverse of energy with bias
+    These should be overwritten later by a second pass (e.g. optical flow).
+    """
+    name = path.stem.lower()
+    fast = ("fast", "glitch", "strobe", "flash", "pulse", "beat", "attack")
+    slow = ("slow", "drift", "wash", "fade", "ritual", "ambient", "breath")
+    e = 0.5 + (0.02 * max(0.0, fps - 24.0))   # higher fps = more energy
+    for k in fast:
+        if k in name:
+            e += 0.15
+    for k in slow:
+        if k in name:
+            e -= 0.15
+    e = max(0.0, min(1.0, e))
+    v = max(0.0, min(1.0, 1.0 - e * 0.7 + (1.0 - organic) * 0.3))
+    return e, v
+
+
 def heat_bucket_of(score: float) -> int:
     """Quantize 0..1 organic into 5 buckets (matching blackbody LUT stops)."""
     return max(0, min(4, int(score * 5)))
@@ -131,7 +173,7 @@ def walk_videos(roots: list[Path]):
                     yield p
 
 
-def process(p: Path, probe_bin: str) -> tuple[str, dict] | None:
+def process(p: Path, probe_bin: str, channel: str, role: str) -> tuple[str, dict] | None:
     try:
         st = p.stat()
     except OSError:
@@ -139,6 +181,7 @@ def process(p: Path, probe_bin: str) -> tuple[str, dict] | None:
     meta = probe(p, probe_bin) or {}
     organic = infer_organic(p, meta.get("width", 0), meta.get("height", 0),
                             meta.get("duration", 0.0))
+    energy, viscosity = infer_energy_viscosity(p, organic, meta.get("fps", 0.0))
     row = {
         "path":     str(p),
         "size":     st.st_size,
@@ -152,6 +195,10 @@ def process(p: Path, probe_bin: str) -> tuple[str, dict] | None:
         "tags":     "",
         "organic":  organic,
         "heat_bucket": heat_bucket_of(organic),
+        "channel":  channel,
+        "role":     role,
+        "energy":   energy,
+        "viscosity": viscosity,
     }
     return str(p), row
 
@@ -165,6 +212,13 @@ def main():
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--probe", default=shutil.which("ffprobe") or "ffprobe")
     ap.add_argument("--limit", type=int, default=0, help="0 = no limit")
+    ap.add_argument("--channel", default="",
+                    help="Channel name tag (e.g. 'A', 'primary53k', 'secondaryB').")
+    ap.add_argument("--role", default="texture",
+                    choices=("texture", "velocity", "both"),
+                    help="'texture' -> skin/density source (53k channel). "
+                         "'velocity' -> flow/nerves source (10k channel). "
+                         "'both' -> available for either.")
     args = ap.parse_args()
 
     roots = [Path(r).expanduser().resolve() for r in args.roots]
@@ -174,6 +228,11 @@ def main():
 
     conn = sqlite3.connect(args.db)
     conn.executescript(DDL)
+    # migrate older dbs missing the channel/role columns
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(videos)")}
+    for col, decl in MIGRATE_COLS:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE videos ADD COLUMN {col} {decl}")
     conn.commit()
 
     t0 = time.time()
@@ -188,7 +247,8 @@ def main():
 
     t1 = time.time()
     with cf.ProcessPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(process, p, args.probe): p for p in paths}
+        futures = {pool.submit(process, p, args.probe, args.channel, args.role): p
+                   for p in paths}
         for fut in cf.as_completed(futures):
             row = fut.result()
             count += 1
@@ -199,9 +259,11 @@ def main():
                 conn.execute(
                     """INSERT OR REPLACE INTO videos
                        (path, size, duration, width, height, fps, codec,
-                        ctime, mtime, tags, organic, heat_bucket)
+                        ctime, mtime, tags, organic, heat_bucket,
+                        channel, role, energy, viscosity)
                        VALUES (:path, :size, :duration, :width, :height, :fps,
-                               :codec, :ctime, :mtime, :tags, :organic, :heat_bucket)""",
+                               :codec, :ctime, :mtime, :tags, :organic, :heat_bucket,
+                               :channel, :role, :energy, :viscosity)""",
                     r)
                 inserted += 1
             except sqlite3.DatabaseError as e:

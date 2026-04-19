@@ -1,4 +1,20 @@
-# Living Archive: using 50k+ videos as DNA
+# Living Archive: 63k videos as DNA (53k skin + 10k nerves)
+
+The archive is split by *role* in the solver, not just by source:
+
+| channel | size  | role       | shader binding                |
+|---------|-------|------------|-------------------------------|
+| A       | 53k   | `texture`  | fh.video_skin.jxs             |
+| B       | 10k   | `velocity` | fh.video_vector.jxs           |
+
+Channel A is your "skin" - colour and density that rides on top of the
+rendered fluid. Channel B is your "nerves" - its luminance gradient
+becomes a direct velocity field that steers the fluid. The audio drives
+SQL matching for both so each one responds to a different facet of the
+sound.
+
+## Legacy usage (single archive)
+
 
 The fluid-heat system can treat your video archive as *material*, not content.
 Each clip is a potential vector field, displacement map, or colour source that
@@ -7,17 +23,33 @@ the audio can summon.
 ## One-time: index the archive
 
     cd scripts
+    # Channel A: 53k primary -> skin
+    python3 archive_indexer.py \
+        --roots /Volumes/primaryA \
+        --db    ../videos.sqlite \
+        --channel A --role texture --workers 6
+
+    # Channel B: 10k secondary -> nerves
+    python3 archive_indexer.py \
+        --roots /Volumes/secondaryB /Volumes/secondaryC \
+        --db    ../videos.sqlite \
+        --channel B --role velocity --workers 6
+
+Single-archive (legacy) call:
+
     python3 archive_indexer.py \
         --roots /Volumes/archive1 /Volumes/archive2 ~/Movies/ink \
         --db    ../videos.sqlite \
         --workers 6
 
-This walks the roots, runs `ffprobe`, and writes a SQLite file (~10-40 MB
-for 50k rows). Columns:
+This walks the roots, runs `ffprobe`, and writes a SQLite file (~15-60 MB
+for 63k rows). Columns:
 
     path, size, duration, width, height, fps, codec,
     ctime, mtime, tags, organic (0..1), heat_bucket (0..4),
-    brightness, motion
+    brightness, motion,
+    channel (A|B|...), role (texture|velocity|both),
+    energy (0..1), viscosity (0..1)
 
 `organic` is a heuristic score from filename + shape that you can later
 overwrite with real measurements (brightness average, optical flow). Rows
@@ -42,20 +74,66 @@ Every time the audio breaches a heat threshold, a new clip is summoned from
 the bucket nearest that heat value. An internal A/B `jit.movie` pair
 alternates so there's always a crossfade buffer ready.
 
+## Audio -> SQL: "living query"
+
+`archive_fetcher.js` accepts multi-criterion queries that rank rows
+against three audio descriptors simultaneously:
+
+    match <heat 0..1> <energy 0..1> <viscosity 0..1>
+
+Internally this becomes:
+
+    ORDER BY ABS(organic - $heat)    * 1.0
+           + ABS(energy  - $energy)  * 0.9
+           + ABS(viscosity - $visc)  * 0.7
+           + jitter
+    ASC LIMIT 1
+
+A loud/fast passage selects high-energy low-viscosity clips; a quiet
+drone pulls thick slow material. `role <texture|velocity>` filters first
+so channel A and channel B pick from their own pools.
+
 ## How the fluid uses the archive
 
-Two integration points:
+Three integration points (any combination):
 
-1. **Pre-inject vector field** via `shaders/fh.video_displace.jxs`
-   The archive clip becomes a spatial modulator that precedes the audio
-   jets; the fluid is *already* aware of the old image before today's
-   sound touches it.
-2. **Background pass** (display only) via the same texture piped into the
-   asemic slot of `fh.organic_lut.jxs`. The heat palette then tints your
-   old ink videos with live heat colour.
+1. **Velocity field** via `shaders/fh.video_vector.jxs` (channel B)
+   Sobel gradient of the 10k "nerves" clip becomes a pure directional
+   force. `curl` parameter rotates gradient 0..90 degrees for tangential
+   swirl. No heat, no density added - only flow.
+2. **Skin overlay** via `shaders/fh.video_skin.jxs` (channel A)
+   The 53k "skin" clip is UV-warped by local fluid velocity and tinted
+   by the current heat colour, then mixed into the rendered fluid by
+   density x heat. The fluid's motion literally pulls your past footage
+   through itself.
+3. **Legacy displacement** via `shaders/fh.video_displace.jxs`
+   A single-channel combination of both; use when you don't have a
+   split archive.
 
-Both wirings are provided via the `in-tex` and `in-pulse` inlets of
-`fh.archive_fetcher.maxpat`.
+## Wiring the dual-channel pair
+
+`abstractions/fh.archive_pair.maxpat` runs two `fh.archive_fetcher`
+instances in lockstep:
+
+    audio heat 0..1  ---+
+    audio energy 0..1 --+--> fh.archive_pair
+    audio visc 0..1  ---+          |
+    biological pulse ---+          +-> out 0: channel A skin texture
+                                   +-> out 1: channel B velocity texture
+
+Each fetcher is pre-configured on loadbang with:
+
+    role texture       // or 'velocity'
+    channel A          // or 'B'
+    min_duration 2.0
+
+Channel B receives an *inverted* heat value so when audio heats up
+channel A (fresh skin), channel B pulls cool-nerve clips - producing
+counter-flow between skin and nerves instead of redundant motion.
+
+The fetcher's internal A/B jit.movie slots still handle smooth
+crossfades (via `fh.crossfade.jxs`), so even rapid SQL matches don't
+drop frames.
 
 ## Performance
 
