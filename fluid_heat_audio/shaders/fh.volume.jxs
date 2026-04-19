@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jittershader name="fh.volume">
+	<description>
+		Pseudo-3D volumetric render. Raymarches a cube, sampling the 2D fluid
+		field at rotating slice angles to fake depth. tex0 is the blackbody-mapped
+		output. Produces "3D smoke" feel without true 3D textures.
+	</description>
+	<param name="tex0" type="int" default="0" />
+	<param name="texdim0" type="vec2" state="TEXDIM0" />
+	<param name="time"    type="float" default="0.0" />
+	<param name="steps"   type="int"   default="48" />
+	<param name="depth"   type="float" default="1.2" />
+	<param name="shear"   type="float" default="0.35" />
+	<param name="swirl"   type="float" default="0.6" />
+	<param name="modelViewProjectionMatrix" type="mat4" state="MODELVIEW_PROJECTION_MATRIX" />
+	<param name="textureMatrix0" type="mat4" state="TEXTURE0_MATRIX" />
+	<param name="position" type="vec3" state="POSITION" />
+	<param name="texcoord" type="vec2" state="TEXCOORD" />
+
+	<language name="glsl" version="1.2">
+		<bind param="modelViewProjectionMatrix" program="vp" />
+		<bind param="textureMatrix0" program="vp" />
+		<bind param="position" program="vp" />
+		<bind param="texcoord" program="vp" />
+		<bind param="tex0" program="fp" />
+		<bind param="texdim0" program="fp" />
+		<bind param="time" program="fp" />
+		<bind param="steps" program="fp" />
+		<bind param="depth" program="fp" />
+		<bind param="shear" program="fp" />
+		<bind param="swirl" program="fp" />
+
+		<program name="vp" type="vertex">
+		<![CDATA[
+		attribute vec3 position;
+		attribute vec2 texcoord;
+		uniform mat4 modelViewProjectionMatrix;
+		uniform mat4 textureMatrix0;
+		void main() {
+			gl_Position = modelViewProjectionMatrix * vec4(position, 1.);
+			gl_TexCoord[0] = textureMatrix0 * vec4(texcoord, 0., 1.);
+		}
+		]]>
+		</program>
+		<program name="fp" type="fragment">
+		<![CDATA[
+		#version 120
+		uniform sampler2DRect tex0;
+		uniform vec2 texdim0;
+		uniform float time, depth, shear, swirl;
+		uniform int steps;
+
+		void main() {
+			vec2 uv0 = gl_TexCoord[0].xy;
+			vec2 uvn = uv0 / texdim0 - 0.5;
+			vec3 acc = vec3(0.);
+			float alpha = 0.;
+			int N = steps;
+			for (int i = 0; i < 96; ++i) {
+				if (i >= N) break;
+				float t = float(i) / float(N);
+				float z = (t - 0.5) * depth;
+				float s = sin(z * swirl + time * 0.2);
+				float c = cos(z * swirl + time * 0.2);
+				vec2 p = vec2(uvn.x * c - uvn.y * s, uvn.x * s + uvn.y * c);
+				p += vec2(shear * z, 0.);
+				vec2 samp = (p + 0.5) * texdim0;
+				samp = clamp(samp, vec2(0.5), texdim0 - 0.5);
+				vec4 c0 = texture2DRect(tex0, samp);
+				float a = (1.0 - alpha) * c0.a * (0.6 / float(N)) * 8.0;
+				acc += c0.rgb * a;
+				alpha += a;
+				if (alpha > 0.98) break;
+			}
+			gl_FragColor = vec4(acc, 1.0);
+		}
+		]]>
+		</program>
+	</language>
+</jittershader>

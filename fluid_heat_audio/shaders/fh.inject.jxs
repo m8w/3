@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jittershader name="fh.inject">
+	<description>
+		Audio-driven impulse injection for fluid + heat.
+		Reads 8 frequency bins mapped to 8 spatial jets.
+		Writes to velocity(RG) + temperature(B) + density(A).
+	</description>
+	<param name="state"    type="int" default="0"   />
+	<param name="texdim"   type="vec2" state="TEXDIM0" />
+	<param name="tex0"     type="int" default="0" />
+	<param name="bins"     type="vec4" default="0. 0. 0. 0." array="2" />
+	<param name="gain"     type="float" default="1.0" />
+	<param name="heat_amt" type="float" default="1.5" />
+	<param name="force_amt" type="float" default="3.0" />
+	<param name="density_amt" type="float" default="0.8" />
+	<param name="modelViewProjectionMatrix" type="mat4" state="MODELVIEW_PROJECTION_MATRIX" />
+	<param name="textureMatrix0" type="mat4" state="TEXTURE0_MATRIX" />
+	<param name="position" type="vec3" state="POSITION" />
+	<param name="texcoord" type="vec2" state="TEXCOORD" />
+
+	<language name="glsl" version="1.2">
+		<bind param="modelViewProjectionMatrix" program="vp" />
+		<bind param="textureMatrix0" program="vp" />
+		<bind param="position" program="vp" />
+		<bind param="texcoord" program="vp" />
+		<bind param="tex0" program="fp" />
+		<bind param="bins" program="fp" />
+		<bind param="gain" program="fp" />
+		<bind param="heat_amt" program="fp" />
+		<bind param="force_amt" program="fp" />
+		<bind param="density_amt" program="fp" />
+		<bind param="texdim" program="fp" />
+
+		<program name="vp" type="vertex">
+		<![CDATA[
+		varying vec2 vUV;
+		attribute vec3 position;
+		attribute vec2 texcoord;
+		uniform mat4 modelViewProjectionMatrix;
+		uniform mat4 textureMatrix0;
+		void main() {
+			gl_Position = modelViewProjectionMatrix * vec4(position, 1.);
+			vUV = vec2(textureMatrix0 * vec4(texcoord, 0., 1.));
+		}
+		]]>
+		</program>
+		<program name="fp" type="fragment">
+		<![CDATA[
+		#version 120
+		varying vec2 vUV;
+		uniform sampler2DRect tex0;
+		uniform vec4 bins[2];
+		uniform float gain;
+		uniform float heat_amt;
+		uniform float force_amt;
+		uniform float density_amt;
+		uniform vec2 texdim;
+
+		// 8 injection sites: (cx, cy, radius, angleDeg)
+		const vec4 JETS[8] = vec4[8](
+			vec4(0.20, 0.15, 0.08,  90.0),   // bin 0 : sub-bass, bottom-left, up
+			vec4(0.50, 0.10, 0.10,  90.0),   // bin 1 : bass, bottom-center, up
+			vec4(0.80, 0.15, 0.08,  90.0),   // bin 2 : low-mid, bottom-right, up
+			vec4(0.20, 0.50, 0.06,   0.0),   // bin 3 : mid, left, right
+			vec4(0.80, 0.50, 0.06, 180.0),   // bin 4 : upper-mid, right, left
+			vec4(0.30, 0.80, 0.05, -45.0),   // bin 5 : presence, top-left, down-right
+			vec4(0.70, 0.80, 0.05, 225.0),   // bin 6 : brilliance, top-right, down-left
+			vec4(0.50, 0.55, 0.12,  90.0)    // bin 7 : air, center, up
+		);
+
+		void main() {
+			vec2 uv = gl_TexCoord[0].xy;
+			vec2 uvn = uv / texdim;
+			vec4 src = texture2DRect(tex0, uv);
+
+			vec2 vel  = src.rg;
+			float T   = src.b;
+			float D   = src.a;
+
+			for (int i = 0; i < 8; ++i) {
+				float amp = (i < 4) ? bins[0][i] : bins[1][i-4];
+				amp = clamp(amp * gain, 0.0, 4.0);
+				vec4 j = JETS[i];
+				float d = distance(uvn, j.xy);
+				float falloff = exp(-(d*d) / (j.z*j.z));
+				float rad = radians(j.w);
+				vec2 dir = vec2(cos(rad), sin(rad));
+				vel += dir * amp * force_amt * falloff;
+				T   += amp * heat_amt * falloff;
+				D   += amp * density_amt * falloff;
+			}
+
+			gl_FragColor = vec4(vel, T, D);
+		}
+		]]>
+		</program>
+	</language>
+</jittershader>
