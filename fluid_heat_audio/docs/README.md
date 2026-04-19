@@ -111,26 +111,47 @@ heat color before being additively mixed.
     |-- fluid_heat_audio.maxpat       main patch
     |-- abstractions/
     |   |-- fh.audio_bins.maxpat      audio -> 8 bins
+    |   |-- fh.organic_mod.maxpat     ASR + Brownian modulation (nervous system)
+    |   |-- fh.archive_fetcher.maxpat SQLite + jit.movie A/B crossfader
     |-- shaders/
-    |   |-- fh.inject.jxs             audio-driven source term
+    |   |-- fh.inject.jxs             audio-driven source term + drift
+    |   |-- fh.video_displace.jxs     archive video as vector field
     |   |-- fh.advect.jxs             semi-Lagrangian
     |   |-- fh.buoyancy.jxs           Boussinesq
     |   |-- fh.diffuse.jxs            viscosity + thermal
+    |   |-- fh.viscosity.jxs          heat-modulated viscosity
     |   |-- fh.vorticity.jxs          curl confinement
+    |   |-- fh.reaction.jxs           Gray-Scott reaction-diffusion
     |   |-- fh.divergence.jxs         div(u)
     |   |-- fh.jacobi.jxs             pressure iteration
     |   |-- fh.gradient.jxs           subtract grad(p)
     |   |-- fh.blackbody.jxs          heat -> color + asemic
+    |   |-- fh.organic_lut.jxs        biological palette (incandescent -> moss)
     |   |-- fh.volume.jxs             raymarched "3D" lift
+    |   |-- fh.crossfade.jxs          flow-warped A/B clip crossfade
+    |-- scripts/
+    |   |-- archive_indexer.py        ffprobe + SQLite indexer
+    |   |-- archive_fetcher.js        Max JS heat-aware picker
     |-- docs/
         |-- README.md                 this file
         |-- PATCHING.md               open & run checklist
+        |-- ORGANIC.md                living-system layer (organic palette, RD, ASR)
+        |-- ARCHIVE.md                50k-video archive integration
 
 ## Dependencies
 
 - Max 9.1 (Jitter) with OpenGL 2.1+ capable GPU
 - One of: `zsa.descriptors` (zsa.bands~) or `analyzer~` (from IRCAM / jean-francois charles)
 - Optional: any PNG/JPG at `assets/asemic.png`
+
+## Organic / living extensions
+
+See [ORGANIC.md](ORGANIC.md) for the biological modulation layer: ASR
+envelopes, Brownian drift on injection sites, heat-modulated viscosity,
+Gray-Scott reaction-diffusion, and the incandescent->moss palette shift.
+
+See [ARCHIVE.md](ARCHIVE.md) for wiring a 50k+ video SQLite archive into
+the solver as a heat-aware vector field with flow-warped crossfades.
 
 ## Notes
 

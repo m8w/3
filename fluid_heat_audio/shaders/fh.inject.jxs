@@ -13,6 +13,9 @@
 	<param name="heat_amt" type="float" default="1.5" />
 	<param name="force_amt" type="float" default="3.0" />
 	<param name="density_amt" type="float" default="0.8" />
+	<param name="time"       type="float" default="0.0" />
+	<param name="jitter"     type="float" default="0.04" />
+	<param name="swarm_rate" type="float" default="0.37" />
 	<param name="modelViewProjectionMatrix" type="mat4" state="MODELVIEW_PROJECTION_MATRIX" />
 	<param name="textureMatrix0" type="mat4" state="TEXTURE0_MATRIX" />
 	<param name="position" type="vec3" state="POSITION" />
@@ -29,6 +32,9 @@
 		<bind param="heat_amt" program="fp" />
 		<bind param="force_amt" program="fp" />
 		<bind param="density_amt" program="fp" />
+		<bind param="time" program="fp" />
+		<bind param="jitter" program="fp" />
+		<bind param="swarm_rate" program="fp" />
 		<bind param="texdim" program="fp" />
 
 		<program name="vp" type="vertex">
@@ -54,7 +60,25 @@
 		uniform float heat_amt;
 		uniform float force_amt;
 		uniform float density_amt;
+		uniform float time;
+		uniform float jitter;
+		uniform float swarm_rate;
 		uniform vec2 texdim;
+
+		// cheap hash noise - Brownian-ish drift for "living organism" motion
+		float hash(vec2 p) {
+			return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+		}
+		float vnoise(vec2 p) {
+			vec2 i = floor(p);
+			vec2 f = fract(p);
+			float a = hash(i);
+			float b = hash(i + vec2(1., 0.));
+			float c = hash(i + vec2(0., 1.));
+			float d = hash(i + vec2(1., 1.));
+			vec2 u = f * f * (3. - 2. * f);
+			return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+		}
 
 		// 8 injection sites: (cx, cy, radius, angleDeg)
 		const vec4 JETS[8] = vec4[8](
@@ -81,10 +105,22 @@
 				float amp = (i < 4) ? bins[0][i] : bins[1][i-4];
 				amp = clamp(amp * gain, 0.0, 4.0);
 				vec4 j = JETS[i];
-				float d = distance(uvn, j.xy);
+
+				// Brownian drift so each "nerve ending" feels alive
+				float fi = float(i);
+				vec2 n = vec2(
+					vnoise(vec2(time * swarm_rate + fi * 3.7, fi * 1.3)) - 0.5,
+					vnoise(vec2(time * swarm_rate * 1.13 + fi * 5.1, fi * 2.1)) - 0.5
+				);
+				vec2 center = j.xy + n * jitter;
+
+				float d = distance(uvn, center);
 				float falloff = exp(-(d*d) / (j.z*j.z));
-				float rad = radians(j.w);
+
+				// direction also nudged by noise so jets wobble
+				float rad = radians(j.w) + (vnoise(vec2(time * 0.8 + fi, fi)) - 0.5) * 0.6;
 				vec2 dir = vec2(cos(rad), sin(rad));
+
 				vel += dir * amp * force_amt * falloff;
 				T   += amp * heat_amt * falloff;
 				D   += amp * density_amt * falloff;

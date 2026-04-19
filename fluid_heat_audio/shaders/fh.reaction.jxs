@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jittershader name="fh.reaction">
+	<description>
+		Gray-Scott reaction-diffusion. Heat acts as feedstock (rate F modulation),
+		density acts as local catalyst. Produces Turing patterns (veins, spots,
+		membranes) that grow on top of the fluid field.
+
+		tex0 = reaction state  R=U(substrate), G=V(product), BA=unused
+		tex1 = fluid state     R=u,G=v,B=T,A=D  (read-only)
+	</description>
+	<param name="tex0" type="int" default="0" />
+	<param name="tex1" type="int" default="1" />
+	<param name="texdim" type="vec2" state="TEXDIM0" />
+	<param name="Du" type="float" default="0.16" />
+	<param name="Dv" type="float" default="0.08" />
+	<param name="F"  type="float" default="0.035" />
+	<param name="kk" type="float" default="0.065" />
+	<param name="heat_feed" type="float" default="0.04" />
+	<param name="dt" type="float" default="1.0" />
+	<param name="modelViewProjectionMatrix" type="mat4" state="MODELVIEW_PROJECTION_MATRIX" />
+	<param name="textureMatrix0" type="mat4" state="TEXTURE0_MATRIX" />
+	<param name="textureMatrix1" type="mat4" state="TEXTURE1_MATRIX" />
+	<param name="position" type="vec3" state="POSITION" />
+	<param name="texcoord" type="vec2" state="TEXCOORD" />
+
+	<language name="glsl" version="1.2">
+		<bind param="modelViewProjectionMatrix" program="vp" />
+		<bind param="textureMatrix0" program="vp" />
+		<bind param="textureMatrix1" program="vp" />
+		<bind param="position" program="vp" />
+		<bind param="texcoord" program="vp" />
+		<bind param="tex0" program="fp" />
+		<bind param="tex1" program="fp" />
+		<bind param="Du" program="fp" />
+		<bind param="Dv" program="fp" />
+		<bind param="F" program="fp" />
+		<bind param="kk" program="fp" />
+		<bind param="heat_feed" program="fp" />
+		<bind param="dt" program="fp" />
+
+		<program name="vp" type="vertex">
+		<![CDATA[
+		attribute vec3 position;
+		attribute vec2 texcoord;
+		uniform mat4 modelViewProjectionMatrix;
+		uniform mat4 textureMatrix0;
+		uniform mat4 textureMatrix1;
+		void main() {
+			gl_Position = modelViewProjectionMatrix * vec4(position, 1.);
+			gl_TexCoord[0] = textureMatrix0 * vec4(texcoord, 0., 1.);
+			gl_TexCoord[1] = textureMatrix1 * vec4(texcoord, 0., 1.);
+		}
+		]]>
+		</program>
+		<program name="fp" type="fragment">
+		<![CDATA[
+		#version 120
+		uniform sampler2DRect tex0;
+		uniform sampler2DRect tex1;
+		uniform float Du, Dv, F, kk, heat_feed, dt;
+
+		vec2 lap(sampler2DRect t, vec2 uv) {
+			vec4 C = texture2DRect(t, uv);
+			vec4 L = texture2DRect(t, uv + vec2(-1., 0.));
+			vec4 R = texture2DRect(t, uv + vec2( 1., 0.));
+			vec4 B = texture2DRect(t, uv + vec2( 0.,-1.));
+			vec4 TT= texture2DRect(t, uv + vec2( 0., 1.));
+			vec4 nl = -C + 0.2*(L+R+B+TT) + 0.05*(
+				texture2DRect(t, uv + vec2(-1.,-1.)) +
+				texture2DRect(t, uv + vec2( 1.,-1.)) +
+				texture2DRect(t, uv + vec2(-1., 1.)) +
+				texture2DRect(t, uv + vec2( 1., 1.))
+			);
+			return nl.rg;
+		}
+
+		void main() {
+			vec2 uv = gl_TexCoord[0].xy;
+			vec2 uvf = gl_TexCoord[1].xy;
+			vec2 uv_  = texture2DRect(tex0, uv).rg;
+			vec4 fluid = texture2DRect(tex1, uvf);
+
+			float U = uv_.r;
+			float V = uv_.g;
+
+			// heat modulates feed rate: hot cells eat substrate faster
+			float Flocal = F + fluid.b * heat_feed;
+			// density nudges V production (cold ink seeds the product)
+			float Vnudge = 0.002 * fluid.a * (1.0 - V);
+
+			vec2 lp = lap(tex0, uv);
+			float uvv = U * V * V;
+			float dU = Du * lp.r - uvv + Flocal * (1.0 - U);
+			float dV = Dv * lp.g + uvv - (Flocal + kk) * V + Vnudge;
+
+			U = clamp(U + dU * dt, 0.0, 1.0);
+			V = clamp(V + dV * dt, 0.0, 1.0);
+
+			gl_FragColor = vec4(U, V, 0.0, 1.0);
+		}
+		]]>
+		</program>
+	</language>
+</jittershader>

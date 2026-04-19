@@ -65,6 +65,11 @@
 				"text" : "fh.audio_bins",
 				"numinlets":2, "numoutlets":3, "outlettype":["","",""] } },
 
+			{ "box" : { "id" : "organic-mod", "maxclass" : "newobj",
+				"patching_rect" : [ 30.0, 208.0, 260.0, 22.0 ],
+				"text" : "fh.organic_mod",
+				"numinlets":3, "numoutlets":1, "outlettype":[""] } },
+
 			{ "box" : { "id" : "audio-tap", "maxclass" : "message",
 				"patching_rect" : [ 300.0, 180.0, 180.0, 22.0 ],
 				"text" : "(out 1: 8 bins list - out 2: peak - out 3: centroid)",
@@ -231,6 +236,51 @@
 				"text" : "jit.gl.slab fh @file shaders/fh.volume.jxs @out_name fh_final",
 				"numinlets":1, "numoutlets":1, "outlettype":["jit_gl_texture"] } },
 
+			{ "box" : { "id" : "lbl-organic", "maxclass" : "comment",
+				"patching_rect" : [ 560.0, 700.0, 500.0, 20.0 ],
+				"text" : "LIVING EXTENSIONS  (drop-in alternates - see docs/ORGANIC.md)",
+				"fontface":1, "numinlets":1, "numoutlets":0 } },
+
+			{ "box" : { "id" : "slab-video-displace", "maxclass" : "newobj",
+				"patching_rect" : [ 560.0, 730.0, 500.0, 22.0 ],
+				"text" : "jit.gl.slab fh @file shaders/fh.video_displace.jxs",
+				"numinlets":2, "numoutlets":1, "outlettype":["jit_gl_texture"] } },
+
+			{ "box" : { "id" : "slab-viscosity", "maxclass" : "newobj",
+				"patching_rect" : [ 560.0, 760.0, 500.0, 22.0 ],
+				"text" : "jit.gl.slab fh @file shaders/fh.viscosity.jxs",
+				"numinlets":1, "numoutlets":1, "outlettype":["jit_gl_texture"] } },
+
+			{ "box" : { "id" : "slab-reaction", "maxclass" : "newobj",
+				"patching_rect" : [ 560.0, 790.0, 500.0, 22.0 ],
+				"text" : "jit.gl.slab fh @file shaders/fh.reaction.jxs @out_name fh_rd",
+				"numinlets":2, "numoutlets":1, "outlettype":["jit_gl_texture"] } },
+
+			{ "box" : { "id" : "slab-organic-lut", "maxclass" : "newobj",
+				"patching_rect" : [ 560.0, 820.0, 500.0, 22.0 ],
+				"text" : "jit.gl.slab fh @file shaders/fh.organic_lut.jxs @out_name fh_color",
+				"numinlets":3, "numoutlets":1, "outlettype":["jit_gl_texture"] } },
+
+			{ "box" : { "id" : "tex-rd", "maxclass" : "newobj",
+				"patching_rect" : [ 30.0, 560.0, 340.0, 22.0 ],
+				"text" : "jit.gl.texture fh @name fh_rd @type float32 @dim 512 288",
+				"numinlets":1, "numoutlets":1, "outlettype":["jit_gl_texture"] } },
+
+			{ "box" : { "id" : "archive", "maxclass" : "newobj",
+				"patching_rect" : [ 30.0, 740.0, 340.0, 22.0 ],
+				"text" : "fh.archive_fetcher",
+				"numinlets":2, "numoutlets":3, "outlettype":["jit_gl_texture","jit_gl_texture",""] } },
+
+			{ "box" : { "id" : "archive-db", "maxclass" : "message",
+				"patching_rect" : [ 30.0, 710.0, 340.0, 22.0 ],
+				"text" : "../videos.sqlite",
+				"numinlets":2, "numoutlets":1, "outlettype":[""] } },
+
+			{ "box" : { "id" : "archive-note", "maxclass" : "comment",
+				"patching_rect" : [ 30.0, 770.0, 500.0, 40.0 ],
+				"text" : "Set the db path, click the message, then peak-amp \u2192 archive:heat triggers clip-of-the-moment. Output texture goes into slab-video-displace (tex1) and/or slab-organic-lut (tex1).",
+				"numinlets":1, "numoutlets":0 } },
+
 			{ "box" : { "id" : "display-quad", "maxclass" : "newobj",
 				"patching_rect" : [ 560.0, 660.0, 500.0, 22.0 ],
 				"text" : "jit.gl.videoplane fh @scale 1.778 1 1 @texture fh_final @blend_enable 0",
@@ -343,7 +393,8 @@
 			{ "patchline" : { "source" : [ "scale-in", 0 ], "destination" : [ "audio-bins", 0 ] } },
 			{ "patchline" : { "source" : [ "gain-msg", 0 ], "destination" : [ "audio-bins", 1 ] } },
 
-			{ "patchline" : { "source" : [ "audio-bins", 0 ], "destination" : [ "bins-split", 0 ] } },
+			{ "patchline" : { "source" : [ "audio-bins", 0 ], "destination" : [ "organic-mod", 0 ] } },
+			{ "patchline" : { "source" : [ "organic-mod", 0 ], "destination" : [ "bins-split", 0 ] } },
 			{ "patchline" : { "source" : [ "bins-split", 0 ], "destination" : [ "bins-lo-unpack", 0 ] } },
 			{ "patchline" : { "source" : [ "bins-split", 1 ], "destination" : [ "bins-hi-unpack", 0 ] } },
 			{ "patchline" : { "source" : [ "bins-lo-unpack", 0 ], "destination" : [ "bins-lo-pk", 1 ] } },
