@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
 
@@ -8,13 +9,22 @@ struct ContentView: View {
         WebViewContainer(audio: audio)
             .ignoresSafeArea()
             .background(Color.black)
-            .onAppear  { audio.start() }
-            .onDisappear { audio.stop() }
-            // Toggle fullscreen with F (common Milkdrop convention).
-            .onKeyPress(.init("f")) {
-                NSApp.mainWindow?.toggleFullScreen(nil)
-                return .handled
+            .onAppear {
+                audio.start()
+                installKeyHandler()
             }
+            .onDisappear { audio.stop() }
+    }
+
+    // onKeyPress requires macOS 14+; use NSEvent monitor for macOS 13 compat.
+    private func installKeyHandler() {
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.charactersIgnoringModifiers?.lowercased() == "f" {
+                NSApp.mainWindow?.toggleFullScreen(nil)
+                return nil   // consume event
+            }
+            return event
+        }
     }
 }
 

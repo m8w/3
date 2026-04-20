@@ -51,7 +51,8 @@ struct WebViewContainer: NSViewRepresentable {
 
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.navigationDelegate = coordinator
-        wv.isOpaque           = false
+        // isOpaque is read-only on WKWebView; use setValue to suppress white flash.
+        wv.setValue(false, forKey: "drawsBackground")
         wv.layer?.backgroundColor = .black
 
         // Hide the scroll indicators that can flash during resize.
