@@ -1,0 +1,9 @@
+{
+  "name": "milk-to-json",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Convert Milkdrop .milk presets to Butterchurn JSON",
+  "scripts": {
+    "convert": "node cli.js"
+  }
+}
