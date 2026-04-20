@@ -269,6 +269,21 @@ window._updateQ = function(q) {
   injectQ(q);
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 10b. BUNDLED PRESET INJECTION — called by PresetLoader.swift after page load
+//      Swift calls: window._addPresets({ "Name": presetObj, … })
+//      Merges custom presets into allPresets and the cycling rotation.
+// ─────────────────────────────────────────────────────────────────────────────
+window._addPresets = function(incoming) {
+  const newNames = Object.keys(incoming);
+  if (!newNames.length) return;
+  Object.assign(allPresets, incoming);
+  // Rebuild names array so new presets enter the random rotation.
+  names.push(...newNames);
+  log(`+${newNames.length} custom preset(s) loaded`);
+  setTimeout(() => { hud.classList.add('hidden'); }, 2500);
+};
+
 // Expose viz globally so QInjector.jsLivePatch() also works if called directly.
 window._viz = viz;
 

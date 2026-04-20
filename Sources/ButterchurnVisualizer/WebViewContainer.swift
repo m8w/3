@@ -96,6 +96,7 @@ struct WebViewContainer: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             print("[WebView] butterchurn_host loaded")
+            PresetLoader.injectAll(into: webView)
         }
 
         func webView(_ webView: WKWebView,
