@@ -2,81 +2,140 @@
 /**
  * cli.js  —  Node.js command-line tool for .milk ↔ Butterchurn JSON
  *
- * USAGE (no install required — Node.js only):
+ * Walks ALL subfolders recursively — handles the standard Milkdrop preset
+ * library layout (categories/sub-categories/presets + textures mixed in).
+ * Writes each .json next to its .milk, preserving the full folder structure.
+ * Textures (.jpg .png .bmp .tga) are listed in the summary but left in place.
  *
- *   node cli.js  MyPreset.milk                    → MyPreset.json
- *   node cli.js  MyPreset.milk  out.json          → out.json
- *   node cli.js  /path/to/presets/               → batch, writes .json next to each .milk
- *   node cli.js  MyPreset.json  --reverse         → MyPreset.milk
- *   node cli.js  MyPreset.milk  --dry-run         → print JSON, no file written
+ * USAGE:
+ *   node cli.js  MyPreset.milk                 → MyPreset.json (single file)
+ *   node cli.js  ~/milkdrop/presets/           → recurse entire tree
+ *   node cli.js  ~/milkdrop/presets/ --dry-run → report only, no files written
+ *   node cli.js  MyPreset.json  --reverse      → MyPreset.milk
  *   node cli.js  --help
  *
- * Node.js 18+ recommended (uses native fs/path, no npm packages needed).
+ * Node.js 18+, no npm packages needed.
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'fs';
-import { resolve, extname, basename, dirname, join } from 'path';
+import { resolve, extname, basename, join, relative } from 'path';
 import { milkToJson, jsonToMilk } from './milk-to-json.js';
 
-// ─── parse argv ──────────────────────────────────────────────────────────────
+// ─── argv ─────────────────────────────────────────────────────────────────────
 
-const args    = process.argv.slice(2);
-const flags   = new Set(args.filter(a => a.startsWith('--')));
-const inputs  = args.filter(a => !a.startsWith('--'));
+const args      = process.argv.slice(2);
+const flags     = new Set(args.filter(a => a.startsWith('--')));
+const inputs    = args.filter(a => !a.startsWith('--'));
+const dryRun    = flags.has('--dry-run');
+const reverse   = flags.has('--reverse');
+const inputPath = inputs[0] ? resolve(inputs[0]) : null;
+const outputArg = inputs[1] ? resolve(inputs[1]) : null;
 
-if (flags.has('--help') || inputs.length === 0) {
+const TEXTURE_EXTS = new Set(['.jpg','.jpeg','.png','.bmp','.tga','.dds','.avi','.gif']);
+const MILK_EXT     = '.milk';
+const JSON_EXT     = '.json';
+
+if (flags.has('--help') || !inputPath) {
   console.log(`
-milk-to-json — .milk ↔ Butterchurn JSON converter
+milk-to-json — .milk ↔ Butterchurn JSON  (recurses all subfolders)
 
-  node cli.js  <input.milk>           → <input>.json
-  node cli.js  <input.milk>  out.json → out.json
-  node cli.js  <folder/>              → batch convert all .milk files
-  node cli.js  <input.json> --reverse → <input>.milk
-  node cli.js  <input.milk> --dry-run → print JSON to stdout
+  node cli.js  <file.milk>              → file.json
+  node cli.js  <folder/>               → converts every .milk found recursively
+  node cli.js  <folder/> --dry-run     → report without writing files
+  node cli.js  <file.json> --reverse   → file.milk
 `);
   process.exit(0);
 }
 
-const dryRun  = flags.has('--dry-run');
-const reverse = flags.has('--reverse');
-const inputPath = resolve(inputs[0]);
-const outputArg = inputs[1] ? resolve(inputs[1]) : null;
+// ─── recursive file walker ────────────────────────────────────────────────────
 
-// ─── batch mode ──────────────────────────────────────────────────────────────
+/**
+ * Walk a directory tree and collect all file paths matching a predicate.
+ * @param {string}   dir
+ * @param {Function} pred  (fullPath, ext) => boolean
+ * @returns {string[]}
+ */
+function walk(dir, pred) {
+  const found = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      found.push(...walk(full, pred));
+    } else if (entry.isFile()) {
+      const ext = extname(entry.name).toLowerCase();
+      if (pred(full, ext)) found.push(full);
+    }
+  }
+  return found;
+}
+
+// ─── batch directory mode ─────────────────────────────────────────────────────
 
 const stat = statSync(inputPath, { throwIfNoEntry: false });
 
 if (stat?.isDirectory()) {
-  if (reverse) { console.error('--reverse batch mode not supported'); process.exit(1); }
-
-  const files = readdirSync(inputPath)
-    .filter(f => extname(f).toLowerCase() === '.milk')
-    .sort();
-
-  if (files.length === 0) {
-    console.error('No .milk files found in', inputPath);
+  if (reverse) {
+    console.error('--reverse batch mode not supported (run on individual .json files).');
     process.exit(1);
   }
 
-  console.log(`Converting ${files.length} preset(s) in ${basename(inputPath)}/\n`);
+  // Collect all .milk files in the entire tree.
+  const milkFiles    = walk(inputPath, (_, ext) => ext === MILK_EXT).sort();
+  const textureFiles = walk(inputPath, (_, ext) => TEXTURE_EXTS.has(ext));
+
+  if (milkFiles.length === 0) {
+    console.error('No .milk files found under', inputPath);
+    process.exit(1);
+  }
+
+  // Build a folder breakdown for the summary header.
+  const folderCounts = {};
+  for (const f of milkFiles) {
+    const rel = relative(inputPath, f);
+    const parts = rel.split('/');
+    const category = parts.length > 1 ? parts[0] : '(root)';
+    folderCounts[category] = (folderCounts[category] ?? 0) + 1;
+  }
+
+  console.log(`\nMilkdrop preset tree: ${inputPath}`);
+  console.log(`  ${milkFiles.length} presets across ${Object.keys(folderCounts).length} folder(s)`);
+  console.log(`  ${textureFiles.length} texture file(s) found (left in place)\n`);
+
+  for (const [cat, count] of Object.entries(folderCounts).sort()) {
+    console.log(`  📁 ${cat}  (${count})`);
+  }
+  console.log();
+
   let ok = 0, fail = 0;
 
-  for (const file of files) {
-    const inFile  = join(inputPath, file);
-    const outFile = join(inputPath, file.replace(/\.milk$/i, '.json'));
+  for (const inFile of milkFiles) {
+    const rel     = relative(inputPath, inFile);       // e.g. "Flexi/foo.milk"
+    const outFile = inFile.replace(/\.milk$/i, JSON_EXT);
+    const name    = basename(inFile, MILK_EXT);
+
     try {
-      const name = basename(file, '.milk');
       const text = readFileSync(inFile, 'utf8');
       const json = JSON.stringify(milkToJson(text, name), null, 2);
       if (!dryRun) writeFileSync(outFile, json, 'utf8');
-      console.log(`  ✓  ${file}  →  ${basename(outFile)}`);
+      console.log(`  ✓  ${rel}`);
       ok++;
     } catch (e) {
-      console.error(`  ✗  ${file}  →  ${e.message}`);
+      console.error(`  ✗  ${rel}  →  ${e.message}`);
       fail++;
     }
   }
-  console.log(`\nDone: ${ok} converted, ${fail} failed${dryRun ? ' (dry-run)' : ''}.`);
+
+  const dryNote = dryRun ? '  (dry-run — no files written)' : '';
+  console.log(`\nDone: ${ok} converted, ${fail} failed.${dryNote}`);
+
+  if (textureFiles.length > 0) {
+    console.log(`\nTextures (${textureFiles.length}) — copy these alongside your JSON files`);
+    console.log(`if your Butterchurn build supports texture loading:\n`);
+    for (const t of textureFiles) {
+      console.log(`  🖼  ${relative(inputPath, t)}`);
+    }
+  }
+
   process.exit(fail > 0 ? 1 : 0);
 }
 
@@ -85,21 +144,18 @@ if (stat?.isDirectory()) {
 const ext = extname(inputPath).toLowerCase();
 
 if (reverse) {
-  // JSON → .milk
-  if (ext !== '.json') { console.error('--reverse expects a .json file'); process.exit(1); }
+  if (ext !== JSON_EXT) { console.error('--reverse expects a .json file'); process.exit(1); }
   const preset = JSON.parse(readFileSync(inputPath, 'utf8'));
   const milk   = jsonToMilk(preset);
-  const out    = outputArg ?? inputPath.replace(/\.json$/i, '.milk');
+  const out    = outputArg ?? inputPath.replace(/\.json$/i, MILK_EXT);
   if (dryRun) { console.log(milk); }
   else        { writeFileSync(out, milk, 'utf8'); console.log('Written:', out); }
-
 } else {
-  // .milk → JSON
-  if (ext !== '.milk') { console.error('Expected a .milk file'); process.exit(1); }
-  const name = basename(inputPath, '.milk');
+  if (ext !== MILK_EXT) { console.error('Expected a .milk file'); process.exit(1); }
+  const name = basename(inputPath, MILK_EXT);
   const text = readFileSync(inputPath, 'utf8');
   const json = JSON.stringify(milkToJson(text, name), null, 2);
-  const out  = outputArg ?? inputPath.replace(/\.milk$/i, '.json');
+  const out  = outputArg ?? inputPath.replace(/\.milk$/i, JSON_EXT);
   if (dryRun) { console.log(json); }
   else        { writeFileSync(out, json, 'utf8'); console.log('Written:', out); }
 }
