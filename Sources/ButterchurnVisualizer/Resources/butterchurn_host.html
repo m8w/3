@@ -35,6 +35,13 @@
 <canvas id="canvas"></canvas>
 <div id="hud">Loading Butterchurn…</div>
 
+<!-- Pre-module queue: Swift may call _addPresets before the ES module finishes
+     loading async CDN imports. Buffer calls here; the module drains on ready. -->
+<script>
+window._presetQueue = [];
+window._addPresets  = function(p) { window._presetQueue.push(p); };
+</script>
+
 <script type="module">
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. IMPORTS — butterchurn + its bundled presets, served as ESM by esm.sh
@@ -272,17 +279,20 @@ window._updateQ = function(q) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 10b. BUNDLED PRESET INJECTION — called by PresetLoader.swift after page load
 //      Swift calls: window._addPresets({ "Name": presetObj, … })
-//      Merges custom presets into allPresets and the cycling rotation.
+//      Merges custom presets into allPresets and the cycling names array.
+//      Replaces the pre-module queue stub defined above, then drains it.
 // ─────────────────────────────────────────────────────────────────────────────
 window._addPresets = function(incoming) {
   const newNames = Object.keys(incoming);
   if (!newNames.length) return;
   Object.assign(allPresets, incoming);
-  // Rebuild names array so new presets enter the random rotation.
   names.push(...newNames);
-  log(`+${newNames.length} custom preset(s) loaded`);
+  log(`+${newNames.length} custom preset(s) loaded (${names.length} total)`);
   setTimeout(() => { hud.classList.add('hidden'); }, 2500);
 };
+// Drain anything Swift already enqueued before the module finished loading.
+(window._presetQueue || []).forEach(p => window._addPresets(p));
+window._presetQueue = null;
 
 // Expose viz globally so QInjector.jsLivePatch() also works if called directly.
 window._viz = viz;
