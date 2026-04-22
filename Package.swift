@@ -29,10 +29,11 @@ let package = Package(
             name: "ButterchurnVisualizer",
             path: "Sources/ButterchurnVisualizer",
             exclude: [
-                "Resources/Presets_Butterchurn/README.md",
-                "Resources/Presets_Butterchurn/LICENSE.md",
+                "Resources/Presets _ Butterchurn/README.md",
+                "Resources/Presets _ Butterchurn/LICENSE.md",
                 "Resources/Presets1/README.md",
                 "Resources/Presets1/LICENSE.md",
+                "Milkdrop.metal",
             ],
             resources: [
                 // butterchurn_host.html + microtonal_warp.milk + preset JSON folders
