@@ -4,86 +4,86 @@ import WebKit
 // MARK: - PresetLoader
 //
 // Scans the entire app-bundle Resources tree for .json preset files,
-// then injects a random sample into the running Butterchurn WebView.
+// then injects ALL of them into the running Butterchurn WebView in
+// batches so the JS side is never handed a single huge payload.
 //
 // ── WHERE TO PUT YOUR FILES ───────────────────────────────────────────────────
+//  Drop .json presets into any subfolder of:
+//    Sources/ButterchurnVisualizer/Resources/
+//  Examples:
+//    Resources/Presets _ Butterchurn/flexi - bubbles.json
+//    Resources/Presets1/martin - gargoyle.json
 //
-//  1. CONVERTED PRESETS (.json)
-//     Drop them into any subfolder of:
-//       Sources/ButterchurnVisualizer/Resources/
-//     Subfolders and arbitrary names are fine — the loader walks the whole tree.
-//     Examples:
-//       Resources/Presets _ Butterchurn/flexi - bubbles.json
-//       Resources/Presets1/martin - gargoyle.json
-//
-//  2. TEXTURES (.jpg .png .bmp .tga)
-//     Drop them into:
-//       Sources/ButterchurnVisualizer/Resources/textures/
-//     Butterchurn's CDN build has ~30 built-in textures.
-//     Custom textures require a patched Butterchurn build — see README.
-//
-//  3. REBUILD
-//     After adding files, press ⌘B in Xcode (or run `swift run`) so they
-//     get bundled. No code changes needed — PresetLoader finds them automatically.
-//
-// ── PERFORMANCE NOTE ─────────────────────────────────────────────────────────
-//  With thousands of presets only MAX_INJECT are loaded per launch (random
-//  sample). Restart the app to get a fresh batch.
+//  After adding files rebuild (`swift run`) — no code changes needed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 final class PresetLoader {
 
-    private static let maxInject = 500
+    private static let batchSize = 200   // presets per evaluateJavaScript call
 
-    // Inject a random sample of bundled presets into `webView`.
-    // Call this from WKNavigationDelegate.webView(_:didFinish:).
+    // Inject all bundled presets in shuffled batches.
+    // Call from WKNavigationDelegate.webView(_:didFinish:).
     static func injectAll(into webView: WKWebView) {
-        let allURLs = findPresetURLs()
-        guard !allURLs.isEmpty else {
-            print("[PresetLoader] No bundled .json presets found in Resources/")
-            return
-        }
-
-        let sampleURLs = allURLs.count > maxInject
-            ? Array(allURLs.shuffled().prefix(maxInject))
-            : allURLs
-
-        print("[PresetLoader] Found \(allURLs.count) preset(s) — injecting \(sampleURLs.count)")
-
-        var presets: [String: Any] = [:]
-        for url in sampleURLs {
-            do {
-                let data   = try Data(contentsOf: url)
-                let parsed = try JSONSerialization.jsonObject(with: data)
-                let name   = url.deletingPathExtension().lastPathComponent
-                presets[name] = parsed
-            } catch {
-                print("[PresetLoader] skipping \(url.lastPathComponent): \(error.localizedDescription)")
+        DispatchQueue.global(qos: .utility).async {
+            let allURLs = findPresetURLs().shuffled()
+            guard !allURLs.isEmpty else {
+                print("[PresetLoader] No bundled .json presets found in Resources/")
+                return
             }
-        }
-
-        guard !presets.isEmpty,
-              let data    = try? JSONSerialization.data(withJSONObject: presets),
-              let jsonStr = String(data: data, encoding: .utf8)
-        else { return }
-
-        let js = "if(typeof window._addPresets==='function')window._addPresets(\(jsonStr));"
-        webView.evaluateJavaScript(js) { _, err in
-            if let err { print("[PresetLoader] inject error: \(err)") }
+            print("[PresetLoader] Found \(allURLs.count) preset(s) — injecting in batches of \(batchSize)")
+            injectBatch(urls: allURLs, offset: 0, into: webView)
         }
     }
 
     // MARK: - Private
 
+    private static func injectBatch(urls: [URL], offset: Int, into webView: WKWebView) {
+        let slice = Array(urls[offset ..< min(offset + batchSize, urls.count)])
+
+        var presets: [String: Any] = [:]
+        for url in slice {
+            guard let data   = try? Data(contentsOf: url),
+                  let parsed = try? JSONSerialization.jsonObject(with: data)
+            else { continue }
+            presets[url.deletingPathExtension().lastPathComponent] = parsed
+        }
+
+        guard !presets.isEmpty,
+              let data    = try? JSONSerialization.data(withJSONObject: presets),
+              let jsonStr = String(data: data, encoding: .utf8)
+        else {
+            scheduleNext(urls: urls, offset: offset, into: webView)
+            return
+        }
+
+        let js = "if(typeof window._addPresets==='function')window._addPresets(\(jsonStr));"
+        DispatchQueue.main.async {
+            webView.evaluateJavaScript(js) { _, err in
+                if let err { print("[PresetLoader] batch error: \(err)") }
+                scheduleNext(urls: urls, offset: offset, into: webView)
+            }
+        }
+    }
+
+    private static func scheduleNext(urls: [URL], offset: Int, into webView: WKWebView) {
+        let next = offset + batchSize
+        guard next < urls.count else {
+            print("[PresetLoader] All \(urls.count) preset(s) injected")
+            return
+        }
+        // Small delay between batches to keep the main thread responsive.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.15) {
+            injectBatch(urls: urls, offset: next, into: webView)
+        }
+    }
+
     /// Walk the entire Resources bundle tree and return URLs of every .json file.
     private static func findPresetURLs() -> [URL] {
         guard let resourceURL = Bundle.module.resourceURL else { return [] }
 
-        // Prefer a dedicated presets/ subfolder if it exists; otherwise search everything.
         let dedicatedURL = resourceURL.appendingPathComponent("presets")
         let searchURL    = FileManager.default.fileExists(atPath: dedicatedURL.path)
-                         ? dedicatedURL
-                         : resourceURL
+                         ? dedicatedURL : resourceURL
 
         guard let enumerator = FileManager.default.enumerator(
             at: searchURL,

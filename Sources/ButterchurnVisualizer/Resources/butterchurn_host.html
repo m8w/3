@@ -44,10 +44,9 @@ window._addPresets  = function(p) { window._presetQueue.push(p); };
 
 <script type="module">
 // ─────────────────────────────────────────────────────────────────────────────
-// 1. IMPORTS — butterchurn + its bundled presets, served as ESM by esm.sh
+// 1. IMPORTS — butterchurn engine only (no CDN preset pack)
 // ─────────────────────────────────────────────────────────────────────────────
-import butterchurn        from 'https://esm.sh/butterchurn@2.6.7';
-import butterchurnPresets from 'https://esm.sh/butterchurn-presets@2.4.7';
+import butterchurn from 'https://esm.sh/butterchurn@2.6.7';
 
 const hud    = document.getElementById('hud');
 const canvas = document.getElementById('canvas');
@@ -181,10 +180,10 @@ function patchPreset(base) {
 canvas.width  = window.innerWidth;
 canvas.height = window.innerHeight;
 
-log('Loading presets…');
-const allPresets = butterchurnPresets.getPresets();
-const names      = Object.keys(allPresets);
-log(`${names.length} presets loaded`);
+// Start empty — all presets come from Swift's PresetLoader (custom JSON files).
+const allPresets = {};
+const names      = [];
+log('Waiting for custom presets…');
 
 // AudioContext must be created after a user interaction or via
 // mediaDevices.getUserMedia().  WKWebView satisfies the requirement
@@ -197,17 +196,21 @@ const viz = butterchurn.createVisualizer(audioCtx, canvas, {
   pixelRatio: window.devicePixelRatio || 1,
 });
 
-// ── Load first preset ────────────────────────────────────────────────────────
-let currentIdx = Math.floor(Math.random() * names.length);
-viz.loadPreset(patchPreset(allPresets[names[currentIdx]]), 0.0);
+// ── Preset cycling ───────────────────────────────────────────────────────────
+// Presets arrive asynchronously from Swift; currentIdx is set on first load.
+let currentIdx = -1;
 
-// Cycle every 20 s; always apply microtonal patch on top.
-setInterval(() => {
-  currentIdx = (currentIdx + 1) % names.length;
-  viz.loadPreset(patchPreset(allPresets[names[currentIdx]]), 2.7);
+function loadNext(blend) {
+  if (!names.length) return;
+  if (currentIdx < 0) currentIdx = Math.floor(Math.random() * names.length);
+  else currentIdx = (currentIdx + 1) % names.length;
+  viz.loadPreset(patchPreset(allPresets[names[currentIdx]]), blend);
   log(names[currentIdx]);
   setTimeout(() => { hud.classList.add('hidden'); }, 3000);
-}, 20_000);
+}
+
+// 60 s per preset × 9 795 presets ≈ 6.8 days before the sequence repeats.
+setInterval(() => loadNext(2.7), 60_000);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. BROWSER AUDIO PATH — Web Audio API mic → JS microtonal FFT
@@ -285,9 +288,12 @@ window._updateQ = function(q) {
 window._addPresets = function(incoming) {
   const newNames = Object.keys(incoming);
   if (!newNames.length) return;
+  const wasEmpty = names.length === 0;
   Object.assign(allPresets, incoming);
   names.push(...newNames);
-  log(`+${newNames.length} custom preset(s) loaded (${names.length} total)`);
+  log(`${names.length} custom presets ready`);
+  // Load the very first preset as soon as the first batch arrives.
+  if (wasEmpty) loadNext(0.0);
   setTimeout(() => { hud.classList.add('hidden'); }, 2500);
 };
 // Drain anything Swift already enqueued before the module finished loading.
