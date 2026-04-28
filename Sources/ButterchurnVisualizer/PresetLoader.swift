@@ -3,16 +3,19 @@ import WebKit
 
 // MARK: - PresetLoader
 //
-// Scans the entire app-bundle Resources tree for .json preset files,
-// then injects ALL of them into the running Butterchurn WebView in
-// batches so the JS side is never handed a single huge payload.
+// Scans the app-bundle Resources tree for preset files and injects them into
+// the running Butterchurn WebView in batches.
+//
+// Supported formats:
+//   .json  — Butterchurn native JSON preset (passed through as-is)
+//   .milk  — Milkdrop text preset (parsed by PresetParser, converted by
+//             MilkPresetConverter, then injected as Butterchurn JSON)
 //
 // ── WHERE TO PUT YOUR FILES ───────────────────────────────────────────────────
-//  Drop .json presets into any subfolder of:
+//  Drop presets into any subfolder of:
 //    Sources/ButterchurnVisualizer/Resources/
-//  Examples:
-//    Resources/Presets _ Butterchurn/flexi - bubbles.json
-//    Resources/Presets1/martin - gargoyle.json
+//  Preferred location (keeps them off the resource root):
+//    Sources/ButterchurnVisualizer/Resources/presets/
 //
 //  After adding files rebuild (`swift run`) — no code changes needed.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,7 +30,7 @@ final class PresetLoader {
         DispatchQueue.global(qos: .utility).async {
             let allURLs = findPresetURLs().shuffled()
             guard !allURLs.isEmpty else {
-                print("[PresetLoader] No bundled .json presets found in Resources/")
+                print("[PresetLoader] No bundled .json / .milk presets found in Resources/")
                 return
             }
             print("[PresetLoader] Found \(allURLs.count) preset(s) — injecting in batches of \(batchSize)")
@@ -42,10 +45,10 @@ final class PresetLoader {
 
         var presets: [String: Any] = [:]
         for url in slice {
-            guard let data   = try? Data(contentsOf: url),
-                  let parsed = try? JSONSerialization.jsonObject(with: data)
-            else { continue }
-            presets[url.deletingPathExtension().lastPathComponent] = parsed
+            let name = url.deletingPathExtension().lastPathComponent
+            if let obj = loadPreset(at: url) {
+                presets[name] = obj
+            }
         }
 
         guard !presets.isEmpty,
@@ -65,22 +68,40 @@ final class PresetLoader {
         }
     }
 
+    // Decode a single preset file — JSON pass-through or .milk conversion.
+    private static func loadPreset(at url: URL) -> Any? {
+        switch url.pathExtension.lowercased() {
+        case "json":
+            guard let data = try? Data(contentsOf: url),
+                  let obj  = try? JSONSerialization.jsonObject(with: data)
+            else { return nil }
+            return obj
+
+        case "milk":
+            guard let preset = try? PresetParser.load(from: url) else { return nil }
+            return MilkPresetConverter.toButterchurnDict(preset)
+
+        default:
+            return nil
+        }
+    }
+
     private static func scheduleNext(urls: [URL], offset: Int, into webView: WKWebView) {
         let next = offset + batchSize
         guard next < urls.count else {
             print("[PresetLoader] All \(urls.count) preset(s) injected")
             return
         }
-        // Small delay between batches to keep the main thread responsive.
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.15) {
             injectBatch(urls: urls, offset: next, into: webView)
         }
     }
 
-    /// Walk the entire Resources bundle tree and return URLs of every .json file.
+    /// Walk the Resources bundle tree and return URLs of every .json and .milk file.
     private static func findPresetURLs() -> [URL] {
         guard let resourceURL = Bundle.module.resourceURL else { return [] }
 
+        // Prefer a dedicated `presets/` subfolder when it exists.
         let dedicatedURL = resourceURL.appendingPathComponent("presets")
         let searchURL    = FileManager.default.fileExists(atPath: dedicatedURL.path)
                          ? dedicatedURL : resourceURL
@@ -91,7 +112,8 @@ final class PresetLoader {
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
+        let supported: Set<String> = ["json", "milk"]
         return (enumerator.allObjects as? [URL] ?? [])
-            .filter { $0.pathExtension.lowercased() == "json" }
+            .filter { supported.contains($0.pathExtension.lowercased()) }
     }
 }

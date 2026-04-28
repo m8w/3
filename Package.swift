@@ -29,11 +29,7 @@ let package = Package(
             name: "ButterchurnVisualizer",
             path: "Sources/ButterchurnVisualizer",
             exclude: [
-                "Resources/Presets _ Butterchurn/README.md",
-                "Resources/Presets _ Butterchurn/LICENSE.md",
-                "Resources/Presets1/README.md",
-                "Resources/Presets1/LICENSE.md",
-                "Milkdrop.metal",
+                "Milkdrop.metal",   // WebGL (Butterchurn) handles rendering; Metal shader kept for reference
             ],
             resources: [
                 // butterchurn_host.html + microtonal_warp.milk + preset JSON folders

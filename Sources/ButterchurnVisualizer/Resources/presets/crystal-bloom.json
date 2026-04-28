@@ -1,0 +1,22 @@
+{
+  "baseVals": {
+    "zoom": 1.0, "rot": 0.0, "cx": 0.5, "cy": 0.5,
+    "dx": 0.0, "dy": 0.0, "warp": 1.0, "sx": 1.0, "sy": 1.0,
+    "decay": 0.985, "gammaadj": 2.2,
+    "echo_zoom": 2.0, "echo_alpha": 0.0, "echo_orient": 0,
+    "wave_mode": 0,
+    "wave_r": 0.8, "wave_g": 0.4, "wave_b": 0.9,
+    "wave_x": 0.5, "wave_y": 0.5,
+    "wave_alpha": 0.9, "wave_scale": 0.8, "wave_smoothing": 0.5,
+    "additivewave": 1, "wave_dots": 0, "wave_thick": 0,
+    "modwavealphabyvolume": 1, "maximizewavecolor": 1,
+    "texwrap": 1, "darken_center": 0,
+    "red_blue": 0, "brighten": 0, "darken": 0, "solarize": 0, "invert": 0,
+    "fshader": 0.0, "ob_size": 0.01, "ib_size": 0.01
+  },
+  "initEQs": "",
+  "perFrameEQs": "",
+  "perPixelEQs": "",
+  "waves": [],
+  "shapes": []
+}
