@@ -32,10 +32,13 @@ let package = Package(
             name: "ButterchurnVisualizer",
             path: "Sources/ButterchurnVisualizer",
             exclude: [
-                "Milkdrop.metal",   // WebGL (Butterchurn) handles rendering; Metal shader kept for reference
+                "Milkdrop.metal",
+                // Exclude legacy preset folders — filenames with $$ break SPM's
+                // resource processor. Put your .json presets in Resources/presets/ instead.
+                "Resources/Presets _ Butterchurn",
+                "Resources/Presets1",
             ],
             resources: [
-                // butterchurn_host.html + microtonal_warp.milk + preset JSON folders
                 .process("Resources")
             ]
         )
