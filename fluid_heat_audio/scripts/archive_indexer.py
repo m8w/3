@@ -4,13 +4,22 @@ archive_indexer.py -- scan directories for video files, extract metadata,
 and populate a SQLite database consumed by fh.archive_fetcher in Max.
 
 Usage:
-    # Channel A: 53k primary "skin/texture" source
+    # Local files: Channel A (53k primary, "skin/texture")
     python3 archive_indexer.py --roots /Volumes/channelA \
         --db videos.sqlite --channel A --role texture --workers 6
 
-    # Channel B: 10k secondary "nerves/velocity" source
+    # Local files: Channel B (10k secondary, "nerves/velocity")
     python3 archive_indexer.py --roots /Volumes/channelB /Volumes/channelC \
         --db videos.sqlite --channel B --role velocity --workers 6
+
+    # Remote URLs (no local copy required - resolver streams/caches at runtime).
+    # CSV must have at minimum a `url` column; other columns are optional.
+    python3 archive_indexer.py --urls youtube_channel_A.csv \
+        --db videos.sqlite --channel A --role texture
+
+    # YouTube ingest one-liner (export 53k channel handle to CSV first):
+    #   yt-dlp --flat-playlist --print "url=%(url)s,youtube_id=%(id)s,duration=%(duration)s" \
+    #          https://www.youtube.com/@yourChannel/videos > channel_A.csv
 
 Schema:
     videos(id INTEGER PRIMARY KEY,
@@ -60,7 +69,9 @@ CREATE TABLE IF NOT EXISTS videos (
     channel     TEXT    DEFAULT '',
     role        TEXT    DEFAULT 'texture',
     energy      REAL    DEFAULT 0.5,
-    viscosity   REAL    DEFAULT 0.5
+    viscosity   REAL    DEFAULT 0.5,
+    remote      INTEGER DEFAULT 0,
+    youtube_id  TEXT    DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_videos_heat ON videos(heat_bucket);
 CREATE INDEX IF NOT EXISTS idx_videos_organic ON videos(organic);
@@ -69,14 +80,17 @@ CREATE INDEX IF NOT EXISTS idx_videos_role ON videos(role);
 CREATE INDEX IF NOT EXISTS idx_videos_channel ON videos(channel);
 CREATE INDEX IF NOT EXISTS idx_videos_energy ON videos(energy);
 CREATE INDEX IF NOT EXISTS idx_videos_viscosity ON videos(viscosity);
+CREATE INDEX IF NOT EXISTS idx_videos_remote ON videos(remote);
 """
 
 # idempotent migration for upgrading an older db
 MIGRATE_COLS = [
-    ("channel",   "TEXT DEFAULT ''"),
-    ("role",      "TEXT DEFAULT 'texture'"),
-    ("energy",    "REAL DEFAULT 0.5"),
-    ("viscosity", "REAL DEFAULT 0.5"),
+    ("channel",    "TEXT DEFAULT ''"),
+    ("role",       "TEXT DEFAULT 'texture'"),
+    ("energy",     "REAL DEFAULT 0.5"),
+    ("viscosity",  "REAL DEFAULT 0.5"),
+    ("remote",     "INTEGER DEFAULT 0"),
+    ("youtube_id", "TEXT DEFAULT ''"),
 ]
 
 
@@ -203,11 +217,83 @@ def process(p: Path, probe_bin: str, channel: str, role: str) -> tuple[str, dict
     return str(p), row
 
 
+def ingest_url_csv(csv_path: Path, channel: str, role: str,
+                   conn: sqlite3.Connection) -> int:
+    """Ingest remote URLs from a CSV. Header columns recognised:
+        url             (required)            -> stored in `path`, remote=1
+        youtube_id      (optional)            -> stored in `youtube_id`
+        duration        (optional, seconds)
+        width, height, fps, codec             (optional)
+        organic         (optional 0..1)
+        energy, viscosity (optional 0..1)
+        tags            (optional)
+        channel, role   (optional, override CLI)
+    """
+    import csv
+    n = 0
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            url = (r.get("url") or "").strip()
+            if not url:
+                continue
+
+            def fnum(k, default=None):
+                v = r.get(k)
+                if v is None or v == "":
+                    return default
+                try:
+                    return float(v)
+                except ValueError:
+                    return default
+
+            organic = fnum("organic", 0.5)
+            row = {
+                "path":     url,
+                "size":     None,
+                "duration": fnum("duration"),
+                "width":    int(fnum("width", 0) or 0) or None,
+                "height":   int(fnum("height", 0) or 0) or None,
+                "fps":      fnum("fps"),
+                "codec":    r.get("codec", "") or "",
+                "ctime":    None,
+                "mtime":    None,
+                "tags":     r.get("tags", "") or "",
+                "organic":  organic,
+                "heat_bucket": heat_bucket_of(organic),
+                "channel":  (r.get("channel") or channel),
+                "role":     (r.get("role") or role),
+                "energy":   fnum("energy", 0.5),
+                "viscosity":fnum("viscosity", 0.5),
+                "remote":   1,
+                "youtube_id": r.get("youtube_id", "") or "",
+            }
+            try:
+                conn.execute("""INSERT OR REPLACE INTO videos
+                    (path, size, duration, width, height, fps, codec,
+                     ctime, mtime, tags, organic, heat_bucket,
+                     channel, role, energy, viscosity, remote, youtube_id)
+                    VALUES (:path, :size, :duration, :width, :height, :fps,
+                            :codec, :ctime, :mtime, :tags, :organic, :heat_bucket,
+                            :channel, :role, :energy, :viscosity, :remote, :youtube_id)""",
+                    row)
+                n += 1
+            except sqlite3.DatabaseError as e:
+                print(f"db error on {url}: {e}", file=sys.stderr)
+            if n % 500 == 0:
+                conn.commit()
+    conn.commit()
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--roots", nargs="+", required=True,
-                    help="Directories to scan recursively")
+    ap.add_argument("--roots", nargs="+", default=[],
+                    help="Directories to scan recursively (local files)")
+    ap.add_argument("--urls", default="",
+                    help="CSV file of remote URLs (use instead of --roots, "
+                         "or in addition to mix local + remote in one db)")
     ap.add_argument("--db", default="videos.sqlite", help="SQLite output path")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--probe", default=shutil.which("ffprobe") or "ffprobe")
@@ -220,6 +306,9 @@ def main():
                          "'velocity' -> flow/nerves source (10k channel). "
                          "'both' -> available for either.")
     args = ap.parse_args()
+
+    if not args.roots and not args.urls:
+        sys.exit("provide --roots and/or --urls")
 
     roots = [Path(r).expanduser().resolve() for r in args.roots]
     for r in roots:
@@ -234,6 +323,16 @@ def main():
         if col not in existing:
             conn.execute(f"ALTER TABLE videos ADD COLUMN {col} {decl}")
     conn.commit()
+
+    if args.urls:
+        csv_path = Path(args.urls).expanduser()
+        if not csv_path.is_file():
+            sys.exit(f"--urls file not found: {csv_path}")
+        n = ingest_url_csv(csv_path, args.channel, args.role, conn)
+        print(f"ingested {n} remote rows from {csv_path}", file=sys.stderr)
+        if not roots:
+            conn.close()
+            return
 
     t0 = time.time()
     count = 0
@@ -260,10 +359,10 @@ def main():
                     """INSERT OR REPLACE INTO videos
                        (path, size, duration, width, height, fps, codec,
                         ctime, mtime, tags, organic, heat_bucket,
-                        channel, role, energy, viscosity)
+                        channel, role, energy, viscosity, remote, youtube_id)
                        VALUES (:path, :size, :duration, :width, :height, :fps,
                                :codec, :ctime, :mtime, :tags, :organic, :heat_bucket,
-                               :channel, :role, :energy, :viscosity)""",
+                               :channel, :role, :energy, :viscosity, 0, '')""",
                     r)
                 inserted += 1
             except sqlite3.DatabaseError as e:

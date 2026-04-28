@@ -6,23 +6,28 @@
 // Messages:
 //   open <path>               open SQLite database
 //   close                     close database
-//   role <str>                filter subsequent queries by role ('texture','velocity','both','')
-//   channel <str>             filter subsequent queries by channel name, '' = any
-//   heat <float 0..1>         pick a random video at the heat bucket, output "path <str>"
+//   role <str>                filter by role ('texture','velocity','both','')
+//   channel <str>             filter by channel name, '' = any
+//   allow_remote <0|1>        include rows with remote=1 (resolver streams them)
+//   only_remote  <0|1>        debug: only return remote rows
+//   heat <float 0..1>         pick a random video at the heat bucket
 //   bucket <int 0..4>         same but explicit bucket
 //   energy <lo> <hi>          pick a random video with lo <= energy <= hi
 //   viscosity <lo> <hi>       pick a random video with lo <= viscosity <= hi
 //   match <heat> <energy> <visc>  weighted multi-criterion (sql ORDER BY)
-//   min_duration <sec>        set minimum duration filter
+//   min_duration <sec>        minimum duration filter (NULL durations pass)
 //   query <sql>               run arbitrary SELECT, output rows as list
 //   count                     output row count for current filter
 //   prefetch <n>              preload n paths into the local queue
-//   next                      pop next prefetched path -> "path <str>"
+//   next                      pop next prefetched path
 //   stats                     output [count, min_heat, max_heat] etc
 //
 // Outputs:
-//   outlet 0: messages ("path <str>", "count <n>", ...)
-//   outlet 1: bangs on state transitions (opened, closed, empty)
+//   outlet 0:
+//      "path <local-file>"      -> ready to read with jit.movie
+//      "resolve <url>"          -> needs archive_resolver.py (yt-dlp + LRU cache)
+//      "count <n>" / "stats ..." / etc
+//   outlet 1: bangs on state transitions (opened, closed, empty, error)
 
 autowatch = 1;
 inlets  = 1;
@@ -34,20 +39,38 @@ var QUEUE  = [];
 var MIN_DUR = 0.0;
 var ROLE    = "";      // "" means do not filter by role
 var CHANNEL = "";      // "" means do not filter by channel
+var ALLOW_REMOTE = 1;  // 0 -> only local files; 1 -> remote rows allowed (resolver active)
+var ONLY_REMOTE  = 0;  // 1 -> only return remote rows (debug)
+
+function _emit(row) {
+	if (!row) return false;
+	if (row.remote && parseInt(row.remote, 10) === 1) {
+		// remote row - the resolver will turn this into a local path
+		outlet(0, "resolve", String(row.path));
+	} else {
+		outlet(0, "path", String(row.path));
+	}
+	return true;
+}
 
 function _filterSQL(extra) {
-	var clauses = ["duration >= " + MIN_DUR];
+	var clauses = ["(duration IS NULL OR duration >= " + MIN_DUR + ")"];
 	if (ROLE && ROLE !== "" && ROLE !== "both") {
 		clauses.push("(role = '" + ROLE + "' OR role = 'both')");
 	}
 	if (CHANNEL && CHANNEL !== "") {
 		clauses.push("channel = '" + CHANNEL + "'");
 	}
+	if (!ALLOW_REMOTE) clauses.push("remote = 0");
+	if (ONLY_REMOTE)   clauses.push("remote = 1");
 	if (extra && extra.length) {
 		for (var i = 0; i < extra.length; ++i) clauses.push(extra[i]);
 	}
 	return "WHERE " + clauses.join(" AND ");
 }
+
+function allow_remote(b) { ALLOW_REMOTE = parseInt(b, 10) ? 1 : 0; }
+function only_remote(b)  { ONLY_REMOTE  = parseInt(b, 10) ? 1 : 0; }
 
 function loadbang() {
 	try {
@@ -96,15 +119,11 @@ function bucket(b) {
 	if (!DB) return;
 	b = Math.max(0, Math.min(4, parseInt(b, 10)));
 	var sql =
-		"SELECT path FROM videos " +
+		"SELECT path, remote FROM videos " +
 		_filterSQL(["heat_bucket = " + b]) +
 		" ORDER BY RANDOM() LIMIT 1";
 	var r = DB.exec(sql);
-	if (r.length) {
-		outlet(0, "path", r[0].path);
-	} else {
-		outlet(1, "empty", b);
-	}
+	if (!_emit(r[0])) outlet(1, "empty", b);
 }
 
 function heat(h) {
@@ -118,12 +137,11 @@ function energy(lo, hi) {
 	lo = parseFloat(lo); hi = parseFloat(hi);
 	if (isNaN(lo)) lo = 0;
 	if (isNaN(hi)) hi = 1;
-	var sql = "SELECT path FROM videos " +
+	var sql = "SELECT path, remote FROM videos " +
 		_filterSQL(["energy BETWEEN " + lo + " AND " + hi]) +
 		" ORDER BY RANDOM() LIMIT 1";
 	var r = DB.exec(sql);
-	if (r.length) outlet(0, "path", r[0].path);
-	else outlet(1, "empty", "energy");
+	if (!_emit(r[0])) outlet(1, "empty", "energy");
 }
 
 function viscosity(lo, hi) {
@@ -131,12 +149,11 @@ function viscosity(lo, hi) {
 	lo = parseFloat(lo); hi = parseFloat(hi);
 	if (isNaN(lo)) lo = 0;
 	if (isNaN(hi)) hi = 1;
-	var sql = "SELECT path FROM videos " +
+	var sql = "SELECT path, remote FROM videos " +
 		_filterSQL(["viscosity BETWEEN " + lo + " AND " + hi]) +
 		" ORDER BY RANDOM() LIMIT 1";
 	var r = DB.exec(sql);
-	if (r.length) outlet(0, "path", r[0].path);
-	else outlet(1, "empty", "viscosity");
+	if (!_emit(r[0])) outlet(1, "empty", "viscosity");
 }
 
 // nearest-match over 3 simultaneous audio descriptors - "living query"
@@ -146,24 +163,24 @@ function match(h, e, v) {
 	if (isNaN(h)) h = 0.5;
 	if (isNaN(e)) e = 0.5;
 	if (isNaN(v)) v = 0.5;
-	// rank by L2 distance; tiebreak with small random jitter
 	var rank = "ABS(organic - " + h + ") * 1.0 " +
 			   "+ ABS(energy - " + e + ") * 0.9 " +
 			   "+ ABS(viscosity - " + v + ") * 0.7 " +
 			   "+ (ABS(RANDOM() % 100) / 1000.0)";
-	var sql = "SELECT path FROM videos " + _filterSQL() +
+	var sql = "SELECT path, remote FROM videos " + _filterSQL() +
 		" ORDER BY " + rank + " ASC LIMIT 1";
 	var r = DB.exec(sql);
-	if (r.length) outlet(0, "path", r[0].path);
-	else outlet(1, "empty", "match");
+	if (!_emit(r[0])) outlet(1, "empty", "match");
 }
 
 function prefetch(n) {
 	if (!DB) return;
 	n = Math.max(1, parseInt(n, 10) || 8);
-	var r = DB.exec("SELECT path FROM videos " + _filterSQL() +
+	var r = DB.exec("SELECT path, remote FROM videos " + _filterSQL() +
 		" ORDER BY RANDOM() LIMIT " + n);
-	QUEUE = r.map(function (row) { return row.path; });
+	QUEUE = r.map(function (row) {
+		return { path: row.path, remote: parseInt(row.remote, 10) === 1 };
+	});
 	outlet(0, "prefetched", QUEUE.length);
 }
 
@@ -172,7 +189,14 @@ function next() {
 		outlet(1, "empty");
 		return;
 	}
-	outlet(0, "path", QUEUE.shift());
+	var row = QUEUE.shift();
+	if (typeof row === "string") {        // legacy queue entries
+		outlet(0, "path", row);
+	} else if (row.remote) {
+		outlet(0, "resolve", row.path);
+	} else {
+		outlet(0, "path", row.path);
+	}
 }
 
 // raw query -- trust your own SQL

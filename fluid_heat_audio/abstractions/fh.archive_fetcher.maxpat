@@ -26,9 +26,19 @@
 			{ "box" : { "id" : "js", "maxclass" : "newobj", "numinlets":1, "numoutlets":2, "outlettype":["",""],
 				"patching_rect" : [ 30.0, 100.0, 280.0, 22.0 ], "text" : "js archive_fetcher.js" } },
 
-			{ "box" : { "id" : "route", "maxclass" : "newobj", "numinlets":1, "numoutlets":5,
-				"outlettype" : [ "", "", "", "", "" ],
-				"patching_rect" : [ 30.0, 140.0, 400.0, 22.0 ], "text" : "route path prefetched count stats error" } },
+			{ "box" : { "id" : "route", "maxclass" : "newobj", "numinlets":1, "numoutlets":6,
+				"outlettype" : [ "", "", "", "", "", "" ],
+				"patching_rect" : [ 30.0, 140.0, 480.0, 22.0 ], "text" : "route path resolve prefetched count stats error" } },
+
+			{ "box" : { "id" : "resolver", "maxclass" : "newobj", "numinlets":3, "numoutlets":4,
+				"outlettype" : [ "", "", "", "" ],
+				"patching_rect" : [ 380.0, 175.0, 280.0, 22.0 ], "text" : "fh.resolver_bridge" } },
+
+			{ "box" : { "id" : "resolve-prepend", "maxclass" : "newobj", "numinlets":1, "numoutlets":1, "outlettype":[""],
+				"patching_rect" : [ 380.0, 145.0, 200.0, 22.0 ], "text" : "prepend resolve" } },
+
+			{ "box" : { "id" : "out-thumb", "maxclass" : "outlet", "numinlets":1, "numoutlets":0,
+				"patching_rect" : [ 700.0, 175.0, 30.0, 30.0 ], "comment" : "thumbnail jpg path (instant fallback while clip downloads)" } },
 
 			{ "box" : { "id" : "path-sprintf", "maxclass" : "newobj", "numinlets":2, "numoutlets":1, "outlettype":[""],
 				"patching_rect" : [ 30.0, 175.0, 220.0, 22.0 ], "text" : "sprintf read %s" } },
@@ -98,10 +108,15 @@
 
 			{ "patchline" : { "source" : [ "js", 0 ], "destination" : [ "route", 0 ] } },
 			{ "patchline" : { "source" : [ "route", 0 ], "destination" : [ "path-sprintf", 0 ] } },
-			{ "patchline" : { "source" : [ "route", 1 ], "destination" : [ "out-info", 0 ] } },
+			{ "patchline" : { "source" : [ "route", 1 ], "destination" : [ "resolve-prepend", 0 ] } },
+			{ "patchline" : { "source" : [ "resolve-prepend", 0 ], "destination" : [ "resolver", 0 ] } },
+			{ "patchline" : { "source" : [ "resolver", 0 ], "destination" : [ "path-sprintf", 0 ] } },
+			{ "patchline" : { "source" : [ "resolver", 2 ], "destination" : [ "out-thumb", 0 ] } },
+			{ "patchline" : { "source" : [ "resolver", 3 ], "destination" : [ "out-info", 0 ] } },
 			{ "patchline" : { "source" : [ "route", 2 ], "destination" : [ "out-info", 0 ] } },
 			{ "patchline" : { "source" : [ "route", 3 ], "destination" : [ "out-info", 0 ] } },
 			{ "patchline" : { "source" : [ "route", 4 ], "destination" : [ "out-info", 0 ] } },
+			{ "patchline" : { "source" : [ "route", 5 ], "destination" : [ "out-info", 0 ] } },
 
 			{ "patchline" : { "source" : [ "path-sprintf", 0 ], "destination" : [ "flip", 0 ] } },
 			{ "patchline" : { "source" : [ "flip", 0 ], "destination" : [ "gate-a", 0 ] } },

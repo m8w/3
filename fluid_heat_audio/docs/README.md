@@ -114,6 +114,7 @@ heat color before being additively mixed.
     |   |-- fh.organic_mod.maxpat     ASR + Brownian modulation (nervous system)
     |   |-- fh.archive_fetcher.maxpat SQLite + jit.movie A/B crossfader
     |   |-- fh.archive_pair.maxpat    dual-channel fetcher (53k skin + 10k nerves)
+    |   |-- fh.resolver_bridge.maxpat OSC bridge to archive_resolver.py
     |-- shaders/
     |   |-- fh.inject.jxs             audio-driven source term + drift
     |   |-- fh.video_displace.jxs     archive video as vector field (legacy single-archive)
@@ -133,8 +134,10 @@ heat color before being additively mixed.
     |   |-- fh.volume.jxs             raymarched "3D" lift
     |   |-- fh.crossfade.jxs          flow-warped A/B clip crossfade
     |-- scripts/
-    |   |-- archive_indexer.py        ffprobe + SQLite indexer
+    |   |-- archive_indexer.py        ffprobe + SQLite indexer (local + remote URLs)
     |   |-- archive_fetcher.js        Max JS heat-aware picker
+    |   |-- archive_resolver.py       OSC sidecar: yt-dlp + LRU cache (no full local copy needed)
+    |   |-- youtube_to_csv.py         dump a YouTube channel/playlist to CSV for indexer
     |-- docs/
         |-- README.md                 this file
         |-- PATCHING.md               open & run checklist
@@ -155,6 +158,10 @@ Gray-Scott reaction-diffusion, and the incandescent->moss palette shift.
 
 See [ARCHIVE.md](ARCHIVE.md) for wiring a 50k+ video SQLite archive into
 the solver as a heat-aware vector field with flow-warped crossfades.
+
+See [STREAMING.md](STREAMING.md) when the archive lives on YouTube and
+can't be fully copied to disk - a resolver sidecar uses yt-dlp + an LRU
+disk cache so only the working set ever lands locally.
 
 ## Notes
 
