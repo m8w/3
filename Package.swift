@@ -33,13 +33,14 @@ let package = Package(
             path: "Sources/ButterchurnVisualizer",
             exclude: [
                 "Milkdrop.metal",
-                // Exclude legacy preset folders — filenames with $$ break SPM's
-                // resource processor. Put your .json presets in Resources/presets/ instead.
-                "Resources/Presets _ Butterchurn",
-                "Resources/Presets1",
             ],
             resources: [
-                .process("Resources")
+                // List resources explicitly so SPM never touches the legacy
+                // Presets _ Butterchurn / Presets1 folders (filenames with $$
+                // in them break SPM's resource processor).
+                .process("Resources/butterchurn_host.html"),
+                .process("Resources/microtonal_warp.milk"),
+                .process("Resources/presets"),
             ]
         )
     ]
