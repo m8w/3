@@ -310,7 +310,10 @@ function resetCycleTimer() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. BROWSER AUDIO PATH — Web Audio API mic → JS microtonal FFT
+// 6. BROWSER AUDIO PATH — disabled; Swift/BlackHole 2ch is always the source.
+//    AudioEngine.swift routes AVAudioEngine to BlackHole 2ch and calls
+//    window._updateQ([…]) on every audio buffer (~43 Hz).
+//    Un-comment startBrowserAudio() below to re-enable the JS mic fallback.
 // ─────────────────────────────────────────────────────────────────────────────
 let browserAnalyser = null;
 
@@ -329,7 +332,7 @@ async function startBrowserAudio() {
     logToSwift('Mic unavailable — using Swift audio path');
   }
 }
-startBrowserAudio();
+// startBrowserAudio();  ← disabled: BlackHole 2ch feeds audio via Swift
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. Q INJECTION
