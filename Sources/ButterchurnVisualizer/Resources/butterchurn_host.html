@@ -165,12 +165,18 @@ dy   = dy+q31*cos(y*18.0+time*3.2)*0.006;
 `;
 
 function patchPreset(base) {
+  // Butterchurn presets use either camelCase or snake_case field names.
+  // Detect which convention this preset uses and append — never replace —
+  // so the preset's own time-based motion is preserved and our q1-q32
+  // modulation adds on top when audio is flowing.
+  const pfKey   = 'perFrameEQs'  in base ? 'perFrameEQs'  : 'per_frame_eqs_eel';
+  const ppKey   = 'perPixelEQs'  in base ? 'perPixelEQs'  : 'per_pixel_eqs_eel';
+  const initKey = 'initEQs'      in base ? 'initEQs'      : 'init_eqs_eel';
   return {
     ...base,
-    // Both naming conventions — butterchurn versions differ slightly.
-    initEQs:      PF_INIT,
-    perFrameEQs:  PER_FRAME,
-    perPixelEQs:  PER_PIXEL,
+    [initKey]: (base[initKey] || '') + PF_INIT,
+    [pfKey]:   (base[pfKey]   || '') + PER_FRAME,
+    [ppKey]:   (base[ppKey]   || '') + PER_PIXEL,
   };
 }
 
