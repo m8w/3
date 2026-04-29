@@ -397,7 +397,13 @@ window._addPresets = function(incoming) {
   showHUD(names.length + ' presets ready', 4000);
   if (wasEmpty) {
     currentIdx = Math.floor(Math.random() * names.length);
-    loadAtIndex(currentIdx, 0.0);
+    try {
+      loadAtIndex(currentIdx, 0.0);
+    } catch(e) {
+      // EEL compile error on first pick; the 60s cycle timer will try the next.
+      console.warn('[butterchurn] initial preset failed:', e.message);
+      currentIdx = -1;
+    }
   }
 };
 // Drain anything Swift enqueued before the module finished loading.

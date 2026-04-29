@@ -111,10 +111,11 @@ per_frame_12=flux_mid= abs(q12-q13) + abs(q14-q15) + abs(q20-q21) + abs(q22-q23)
 ; The heart of the microtonal design.  When a pitch sits between two bins the
 ; sign of dq tells us which degree it leans toward.  Combined pairs drive
 ; orthogonal motion so no two scale relationships move in the same direction.
-per_frame_13=dq_lo   = (q8  - q9)  ;  ; low↔mid  boundary shear
-per_frame_14=dq_mid  = (q16 - q17) ;  ; mid↔hi   boundary shear
-per_frame_15=dq_hi   = (q20 - q21) ;  ; upper-mid internal shear
-per_frame_16=dq_air  = (q28 - q29) ;  ; presence↔air shear
+; dq signals: which side of each microtonal boundary is louder
+per_frame_13=dq_lo  = q8  - q9;
+per_frame_14=dq_mid = q16 - q17;
+per_frame_15=dq_hi  = q20 - q21;
+per_frame_16=dq_air = q28 - q29;
 
 ; ── Cumulative spin — integrates rotation driven by microtonal shear ──────────
 ; dq_lo is the dominant low-frequency differential.  Rotating by its sign
@@ -152,10 +153,10 @@ per_frame_25=wave_g = q15 * (0.5 + centroid * 0.5);
 per_frame_26=wave_b = q25 * (0.3 + centroid * 0.7);
 
 ; WAVE GEOMETRY
-per_frame_27=wave_x     = 0.5 + dq_lo * 0.15;       ; orbit horizontally with shear
-per_frame_28=wave_y     = 0.5 + dq_hi * 0.15;       ; orbit vertically  with shear
-per_frame_29=wave_scale = 0.7 + high_att * 1.3;      ; highs → bigger waveform
-per_frame_30=wave_a     = 0.5 + mid_att  * 0.5;      ; mid energy controls opacity
+per_frame_27=wave_x     = 0.5 + dq_lo * 0.15;
+per_frame_28=wave_y     = 0.5 + dq_hi * 0.15;
+per_frame_29=wave_scale = 0.7 + high_att * 1.3;
+per_frame_30=wave_a     = 0.5 + mid_att * 0.5;
 
 ; ─────────────────────────────────────────────────────────────────────────────
 ; PER-PIXEL — compiled to GLSL by Butterchurn, runs on GPU for every pixel.

@@ -3,25 +3,24 @@ import CoreAudio
 
 // MARK: - AudioEngine
 //
-// Captures audio from BlackHole 2ch (the system default input — set once in
-// System Settings → Sound → Input → BlackHole 2ch).
+// Captures audio from BlackHole 2ch. On every call to start() the engine
+// switches the macOS system default input to BlackHole 2ch — this must happen
+// BEFORE the first access to engine.inputNode, because AVAudioEngine caches
+// the input-device format lazily on that first access. Changing the system
+// default afterwards leaves the cache stale.
 //
-// No AUHAL device-routing is performed here; AVAudioEngine uses whatever
-// Core Audio reports as the default input device, which the user has already
-// configured. Attempting to force a device via kAudioOutputUnitProperty_CurrentDevice
-// after the engine has cached the format causes a channel/rate mismatch.
+// The user never needs to open System Settings; the app owns this input slot.
 //
-// ── SETUP (one-time) ──────────────────────────────────────────────────────────
-//  1. Open Audio MIDI Setup → "+" → Create Multi-Output Device
-//       → check "BlackHole 2ch" + your headphones / speakers
-//  2. System Settings → Sound → Output  → that Multi-Output Device
-//     System Settings → Sound → Input   → BlackHole 2ch
-//  3. The visualiser now receives your full system mix. No microphone needed.
+// ── ONE-TIME SETUP ────────────────────────────────────────────────────────────
+//  Audio MIDI Setup → "+" → Multi-Output Device
+//    → check "BlackHole 2ch" + headphones / speakers
+//  System Settings → Sound → Output → that Multi-Output Device
+//  (Input will be managed automatically by this engine.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 final class AudioEngine: ObservableObject {
 
-    // Called on the main thread with 32 normalised [0,1] magnitudes.
+    /// Called on the main thread with 32 normalised [0,1] magnitudes.
     var onQ: (([Float]) -> Void)?
 
     static let inputDeviceName = "BlackHole 2ch"
@@ -40,32 +39,32 @@ final class AudioEngine: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
-        let inputNode = engine.inputNode
-
-        // Log the current system default input so the user can verify routing.
-        if let id = systemDefaultInputDeviceID(), let name = deviceName(for: id) {
-            print("[AudioEngine] System default input: \(name) (id \(id))")
-            if name != Self.inputDeviceName {
-                print("[AudioEngine] WARNING: expected '\(Self.inputDeviceName)'.")
-                print("[AudioEngine] Go to System Settings → Sound → Input and select '\(Self.inputDeviceName)'.")
-                print("[AudioEngine] Available inputs: \(inputDeviceNames())")
+        // ── Step 1: switch system default input to BlackHole 2ch ──────────────
+        // Must happen before the first engine.inputNode access.
+        if let id = coreAudioDeviceID(named: Self.inputDeviceName) {
+            if setSystemDefaultInput(to: id) {
+                print("[AudioEngine] System input → \(Self.inputDeviceName) (id \(id))")
+            } else {
+                print("[AudioEngine] Could not switch to \(Self.inputDeviceName) — continuing with current default")
             }
         } else {
-            print("[AudioEngine] Could not read system default input device.")
+            print("[AudioEngine] '\(Self.inputDeviceName)' not found.")
+            print("[AudioEngine] Available inputs: \(inputDeviceNames())")
         }
 
-        // Use AVAudioEngine's already-resolved format for the current default
-        // input device. Reading this *before* any routing attempt keeps the
-        // format cache consistent with the tap format we pass below.
+        // ── Step 2: read the (now-correct) hardware format ────────────────────
+        let inputNode = engine.inputNode
         let fmt = inputNode.outputFormat(forBus: 0)
-        let sr: Float = fmt.sampleRate > 0 ? Float(fmt.sampleRate) : 44100
+        let sr: Float = fmt.sampleRate > 0 ? Float(fmt.sampleRate) : 48000
         print("[AudioEngine] Input format: \(fmt.channelCount) ch, \(fmt.sampleRate) Hz")
 
+        // ── Step 3: initialise FFT ────────────────────────────────────────────
         let bufferSize: AVAudioFrameCount = 4096
         fft = MicrotonalFFT(bufferSize: Int(bufferSize), sampleRate: sr)
 
-        // Pass `fmt` explicitly so the tap and the engine agree on channel
-        // count and sample rate, avoiding "config change pending" errors.
+        // ── Step 4: install tap ───────────────────────────────────────────────
+        // Pass the live fmt explicitly — avoids the "config change pending" error
+        // that occurs when the tap format and the cached hardware format disagree.
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: fmt) {
             [weak self] buffer, _ in
             guard let self,
@@ -81,6 +80,7 @@ final class AudioEngine: ObservableObject {
             DispatchQueue.main.async { self.onQ?(q) }
         }
 
+        // ── Step 5: start ─────────────────────────────────────────────────────
         do {
             try engine.start()
             print("[AudioEngine] started — sampleRate: \(sr) Hz")
@@ -97,18 +97,25 @@ final class AudioEngine: ObservableObject {
 
     // MARK: - Core Audio device helpers
 
-    private func systemDefaultInputDeviceID() -> AudioDeviceID? {
+    @discardableResult
+    private func setSystemDefaultInput(to deviceID: AudioDeviceID) -> Bool {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
             mScope:    kAudioObjectPropertyScopeGlobal,
             mElement:  kAudioObjectPropertyElementMain
         )
-        var id   = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &id
-        ) == noErr, id != 0 else { return nil }
-        return id
+        var id = deviceID
+        return AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size), &id
+        ) == noErr
+    }
+
+    private func coreAudioDeviceID(named name: String) -> AudioDeviceID? {
+        for id in allDeviceIDs() {
+            if deviceName(for: id) == name { return id }
+        }
+        return nil
     }
 
     private func inputDeviceNames() -> [String] {
@@ -143,9 +150,12 @@ final class AudioEngine: ObservableObject {
             mScope:    kAudioObjectPropertyScopeGlobal,
             mElement:  kAudioObjectPropertyElementMain
         )
-        var cfName = "" as CFString
-        var size   = UInt32(MemoryLayout<CFString>.size)
-        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &cfName) == noErr else { return nil }
+        var cfName: CFString = "" as CFString
+        var size = UInt32(MemoryLayout<CFString>.size)
+        let status = withUnsafeMutablePointer(to: &cfName) {
+            AudioObjectGetPropertyData(id, &addr, 0, nil, &size, $0)
+        }
+        guard status == noErr else { return nil }
         return cfName as String
     }
 
