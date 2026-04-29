@@ -3,8 +3,13 @@ import CoreAudio
 
 // MARK: - AudioEngine
 //
-// Captures audio from BlackHole 2ch via AVAudioEngine and publishes 32
-// microtonal magnitudes (q1–q32) to the WebView on every audio callback.
+// Captures audio from BlackHole 2ch (the system default input — set once in
+// System Settings → Sound → Input → BlackHole 2ch).
+//
+// No AUHAL device-routing is performed here; AVAudioEngine uses whatever
+// Core Audio reports as the default input device, which the user has already
+// configured. Attempting to force a device via kAudioOutputUnitProperty_CurrentDevice
+// after the engine has cached the format causes a channel/rate mismatch.
 //
 // ── SETUP (one-time) ──────────────────────────────────────────────────────────
 //  1. Open Audio MIDI Setup → "+" → Create Multi-Output Device
@@ -12,8 +17,6 @@ import CoreAudio
 //  2. System Settings → Sound → Output  → that Multi-Output Device
 //     System Settings → Sound → Input   → BlackHole 2ch
 //  3. The visualiser now receives your full system mix. No microphone needed.
-//
-//  To change the device name (e.g. "BlackHole 16ch"), edit `inputDeviceName`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 final class AudioEngine: ObservableObject {
@@ -21,17 +24,12 @@ final class AudioEngine: ObservableObject {
     // Called on the main thread with 32 normalised [0,1] magnitudes.
     var onQ: (([Float]) -> Void)?
 
-    // Name of the Core Audio input device to use.
-    // Must exactly match the name shown in Audio MIDI Setup.
     static let inputDeviceName = "BlackHole 2ch"
-
-    // ── Private state ─────────────────────────────────────────────────────────
 
     private let engine     = AVAudioEngine()
     private var fft:       MicrotonalFFT?
     private var normaliser = AdaptiveNormaliser()
 
-    // 31-EDO probe frequencies: baseHz=55, stride=3, 32 bins.
     private let targetHz: [Float] = makeEDOFrequencies(
         edo:       31,
         baseHz:    55.0,
@@ -42,31 +40,32 @@ final class AudioEngine: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
-        // Route the input node to BlackHole 2ch BEFORE reading its format;
-        // the format is device-specific (sample rate, channel count).
         let inputNode = engine.inputNode
 
-        if let deviceID = coreAudioDeviceID(named: Self.inputDeviceName) {
-            if routeInputNode(to: deviceID) {
-                print("[AudioEngine] Input → \(Self.inputDeviceName) (id \(deviceID))")
-            } else {
-                print("[AudioEngine] Could not route to \(Self.inputDeviceName) — using system default")
+        // Log the current system default input so the user can verify routing.
+        if let id = systemDefaultInputDeviceID(), let name = deviceName(for: id) {
+            print("[AudioEngine] System default input: \(name) (id \(id))")
+            if name != Self.inputDeviceName {
+                print("[AudioEngine] WARNING: expected '\(Self.inputDeviceName)'.")
+                print("[AudioEngine] Go to System Settings → Sound → Input and select '\(Self.inputDeviceName)'.")
+                print("[AudioEngine] Available inputs: \(inputDeviceNames())")
             }
         } else {
-            print("[AudioEngine] '\(Self.inputDeviceName)' not found.")
-            print("[AudioEngine] Available input devices: \(inputDeviceNames())")
-            print("[AudioEngine] Falling back to system default input.")
+            print("[AudioEngine] Could not read system default input device.")
         }
 
-        // Read format after device is selected so sample rate is correct.
+        // Use AVAudioEngine's already-resolved format for the current default
+        // input device. Reading this *before* any routing attempt keeps the
+        // format cache consistent with the tap format we pass below.
         let fmt = inputNode.outputFormat(forBus: 0)
         let sr: Float = fmt.sampleRate > 0 ? Float(fmt.sampleRate) : 44100
+        print("[AudioEngine] Input format: \(fmt.channelCount) ch, \(fmt.sampleRate) Hz")
 
-        // 4096 samples → ~93 ms latency at 44100 Hz, ~10.8 Hz/bin resolution.
         let bufferSize: AVAudioFrameCount = 4096
-
         fft = MicrotonalFFT(bufferSize: Int(bufferSize), sampleRate: sr)
 
+        // Pass `fmt` explicitly so the tap and the engine agree on channel
+        // count and sample rate, avoiding "config change pending" errors.
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: fmt) {
             [weak self] buffer, _ in
             guard let self,
@@ -79,13 +78,12 @@ final class AudioEngine: ObservableObject {
                                    count:   count,
                                    targetHz: self.targetHz)
             self.normaliser.normalise(&q)
-
             DispatchQueue.main.async { self.onQ?(q) }
         }
 
         do {
             try engine.start()
-            print("[AudioEngine] started — device: \(Self.inputDeviceName), sampleRate: \(sr) Hz")
+            print("[AudioEngine] started — sampleRate: \(sr) Hz")
         } catch {
             print("[AudioEngine] start failed: \(error)")
         }
@@ -99,30 +97,20 @@ final class AudioEngine: ObservableObject {
 
     // MARK: - Core Audio device helpers
 
-    /// Set `engine.inputNode`'s underlying AUHAL to a specific device.
-    @discardableResult
-    private func routeInputNode(to deviceID: AudioDeviceID) -> Bool {
-        guard let au = engine.inputNode.audioUnit else { return false }
-        var id = deviceID
-        return AudioUnitSetProperty(
-            au,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &id,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        ) == noErr
+    private func systemDefaultInputDeviceID() -> AudioDeviceID? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope:    kAudioObjectPropertyScopeGlobal,
+            mElement:  kAudioObjectPropertyElementMain
+        )
+        var id   = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &id
+        ) == noErr, id != 0 else { return nil }
+        return id
     }
 
-    /// Find the `AudioDeviceID` for a device whose name exactly matches `name`.
-    private func coreAudioDeviceID(named name: String) -> AudioDeviceID? {
-        for id in allDeviceIDs() {
-            if deviceName(for: id) == name { return id }
-        }
-        return nil
-    }
-
-    /// Names of all devices that have at least one input stream.
     private func inputDeviceNames() -> [String] {
         allDeviceIDs().compactMap { id -> String? in
             guard hasInputStream(id) else { return nil }
@@ -142,7 +130,6 @@ final class AudioEngine: ObservableObject {
         guard AudioObjectGetPropertyDataSize(
             AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size
         ) == noErr else { return [] }
-
         var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
         guard AudioObjectGetPropertyData(
             AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids

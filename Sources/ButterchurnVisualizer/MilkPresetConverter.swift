@@ -26,7 +26,6 @@ private let milkToButterchurnKey: [String: String] = [
     "bsolarize":          "solarize",
     "binvert":            "invert",
     "bredblue" :          "red_blue",
-    "bdarken":            "darken",
     "bbrighten":          "brighten",
     // Echo / feedback overlay
     "fvideoechozoom":     "echo_zoom",
