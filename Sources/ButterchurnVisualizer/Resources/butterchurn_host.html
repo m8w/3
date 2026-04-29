@@ -2,15 +2,12 @@
 <!--
   butterchurn_host.html
   Loads Butterchurn (WebGL Milkdrop) from the esm.sh CDN.
-  Runs inside a WKWebView with baseURL = https://milkdrop.local so that
-  cross-origin ESM imports from esm.sh are allowed by CORS.
+  Runs inside a WKWebView with baseURL = https://milkdrop.local.
 
-  Two audio paths (whichever fires first wins):
-    A. Swift path  — Swift calls window._updateQ([32 floats]) every ~43 Hz.
-                     Values come from MicrotonalFFT.swift (AVAudioEngine tap).
-    B. Browser path — getUserMedia() grabs the mic directly and computes the
-                     same 31-EDO microtonal FFT in JavaScript.
-  Both paths write into butterchurn's globalVars.q1…q32 before render().
+  Audio source: Swift AudioQueue → BlackHole 2ch → window._updateQ([32 floats])
+  Preset sources:
+    1. butterchurn-presets CDN pack (~150 presets, loaded async after page ready)
+    2. Swift PresetLoader.swift injects bundled .json / .milk presets
 
   Keyboard controls:
     N / → : next preset (2.7 s blend)
@@ -96,22 +93,18 @@
     <div class="spec-bar" id="sb6"></div>
     <div class="spec-bar" id="sb7"></div>
   </div>
-  <div id="preset-line">Loading Butterchurn…</div>
+  <div id="preset-line">Loading presets…</div>
   <div id="hint-line">N=next  P=prev  B=cut  Space=pause  H=hud</div>
   <div id="level-rail"><div id="level-fill"></div></div>
 </div>
 
-<!-- Pre-module queue: Swift may call _addPresets before the ES module finishes
-     loading async CDN imports. Buffer calls here; the module drains on ready. -->
+<!-- Pre-module queue: Swift may call _addPresets before the ES module is ready. -->
 <script>
 window._presetQueue = [];
 window._addPresets  = function(p) { window._presetQueue.push(p); };
 </script>
 
 <script type="module">
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. IMPORTS — butterchurn engine only (no CDN preset pack)
-// ─────────────────────────────────────────────────────────────────────────────
 import butterchurn from 'https://esm.sh/butterchurn@2.6.7';
 
 const canvas     = document.getElementById('canvas');
@@ -121,8 +114,8 @@ const levelFill  = document.getElementById('level-fill');
 const hud        = document.getElementById('hud');
 const specBars   = Array.from({length: 8}, (_, i) => document.getElementById('sb' + i));
 
-let hudVisible  = true;
-let hudTimeout  = null;
+let hudVisible = true;
+let hudTimeout = null;
 
 function showHUD(text, hideAfterMs = 3500) {
   presetLine.textContent = text;
@@ -137,7 +130,6 @@ function showHUD(text, hideAfterMs = 3500) {
   }
 }
 
-// Hide the keyboard hint after 8 s on first load.
 setTimeout(() => { hintLine.style.display = 'none'; }, 8000);
 
 const logToSwift = msg => {
@@ -145,120 +137,74 @@ const logToSwift = msg => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. MICROTONAL FREQUENCY TABLE — 31-EDO, stride 3, base 55 Hz
-//    Matches makeEDOFrequencies(edo:31, baseHz:55, stride:3) in Swift.
+// MICROTONAL EQUATIONS — appended to presets that have no existing equations.
+// CDN presets (which have their own motion code) are loaded as-is.
 // ─────────────────────────────────────────────────────────────────────────────
-const EDO       = 31;
-const BASE      = 55.0;
-const STRIDE    = 3;
-const EDO_RATIO = Math.pow(2, 1 / EDO);
-const EDO_HZ    = Array.from({length: 32}, (_, i) => BASE * Math.pow(EDO_RATIO, i * STRIDE));
+const PF_INIT = 'low=0;mlo=0;mhi=0;high=0;centroid=0.5;flux_lo=0;flux_hi=0;' +
+                'flux_mid=0;low_att=0;high_att=0;mid_att=0;spin_acc=0;' +
+                'dq_lo=0;dq_hi=0;dq_mid=0;dq_air=0;';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. MICROTONAL FFT — mirrors MicrotonalFFT.magnitudes() in Swift
-// ─────────────────────────────────────────────────────────────────────────────
-const MAX_SEEN = new Float32Array(32).fill(1e-4);
+const PER_FRAME =
+`low=(q1+q2+q3+q4+q5+q6+q7+q8)*0.125;
+mlo=(q9+q10+q11+q12+q13+q14+q15+q16)*0.125;
+mhi=(q17+q18+q19+q20+q21+q22+q23+q24)*0.125;
+high=(q25+q26+q27+q28+q29+q30+q31+q32)*0.125;
+low_att=low_att*0.75+low*0.25;
+mid_att=mid_att*0.78+mlo*0.22+mhi*0.10;
+high_att=high_att*0.65+high*0.35;
+_denom=low+mlo+mhi+high+0.001;
+centroid=(low*0.125+mlo*0.375+mhi*0.625+high*0.875)/_denom;
+flux_lo=abs(q1-q2)+abs(q3-q4)+abs(q5-q6)+abs(q7-q8);
+flux_hi=abs(q25-q26)+abs(q27-q28)+abs(q29-q30)+abs(q31-q32);
+flux_mid=abs(q12-q13)+abs(q14-q15)+abs(q20-q21)+abs(q22-q23);
+dq_lo=q8-q9;dq_mid=q16-q17;dq_hi=q20-q21;dq_air=q28-q29;
+spin_acc=spin_acc*0.92+dq_lo*0.08;
+decay=0.965-low_att*0.018;
+zoom=1.0+low_att*0.055-high_att*0.025;
+rot=spin_acc*0.4+centroid*0.015*sin(time*0.7);
+warp=0.80+q1*0.20+q32*0.15+flux_hi*1.20;
+dx=dq_lo*0.012+dq_air*0.005*sin(time*1.1);
+dy=dq_hi*0.012+dq_mid*0.005*cos(time*0.9);
+wave_r=q5*(1.0-centroid*0.5);
+wave_g=q15*(0.5+centroid*0.5);
+wave_b=q25*(0.3+centroid*0.7);
+wave_x=0.5+dq_lo*0.15;wave_y=0.5+dq_hi*0.15;
+wave_scale=0.7+high_att*1.3;wave_a=0.5+mid_att*0.5;`;
 
-function computeQ(freqData, fftSize, sampleRate) {
-  const nyquist  = sampleRate / 2;
-  const freqRes  = sampleRate / fftSize;
-  const binCount = freqData.length;
-  const q        = new Float32Array(32);
+const PER_PIXEL =
+`warp=warp+q1*0.10*sin(rad*2.5+time*0.4);
+warp=warp+(q16+q17)*0.06*cos(ang*3.0+time*0.9);
+warp=warp+q32*0.08*sin(x*14.0+y*14.0+time*2.5)*rad*rad;
+zoom=zoom+low_att*rad*0.06;
+rot=rot+flux_hi*0.08*sin(rad*4.0);
+dx=dx+dq_lo*sin(ang)*0.010+q1*sin(rad*2.0+time*0.3)*0.020;
+dy=dy+dq_hi*cos(ang)*0.010+q2*cos(rad*2.0+time*0.3)*0.020;
+dx=dx+(q8-q9)*0.010;dy=dy+(q20-q21)*0.010;
+dx=dx+q32*sin(x*18.0+time*3.2)*0.006;
+dy=dy+q31*cos(y*18.0+time*3.2)*0.006;`;
 
-  for (let i = 0; i < 32; i++) {
-    const hz = EDO_HZ[i];
-    if (hz <= 0 || hz >= nyquist) continue;
-    const exactBin = hz / freqRes;
-    const lo   = Math.floor(exactBin);
-    const hi   = Math.min(lo + 1, binCount - 1);
-    const frac = exactBin - lo;
-    const ampLo = freqData[lo] / 255;
-    const ampHi = freqData[hi] / 255;
-    q[i] = ampLo + frac * (ampHi - ampLo);
-  }
-
-  for (let i = 0; i < 32; i++) {
-    MAX_SEEN[i] = Math.max(MAX_SEEN[i] * 0.999, Math.max(q[i], 1e-4));
-    q[i] = Math.min(1, q[i] / MAX_SEEN[i]);
-  }
-  return q;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 4. MICROTONAL EQUATIONS — identical to microtonal_warp.milk
-//    Appended into every preset so q1–q32 drive the visuals on top of
-//    whatever the preset's own motion equations already do.
-// ─────────────────────────────────────────────────────────────────────────────
-const PF_INIT = [
-  'low=0;mlo=0;mhi=0;high=0;',
-  'centroid=0.5;flux_lo=0;flux_hi=0;flux_mid=0;',
-  'low_att=0;high_att=0;mid_att=0;spin_acc=0;',
-  'dq_lo=0;dq_hi=0;dq_mid=0;dq_air=0;'
-].join('');
-
-const PER_FRAME = `
-low  = (q1+q2+q3+q4+q5+q6+q7+q8)*0.125;
-mlo  = (q9+q10+q11+q12+q13+q14+q15+q16)*0.125;
-mhi  = (q17+q18+q19+q20+q21+q22+q23+q24)*0.125;
-high = (q25+q26+q27+q28+q29+q30+q31+q32)*0.125;
-low_att  = low_att*0.75+low*0.25;
-mid_att  = mid_att*0.78+mlo*0.22+mhi*0.10;
-high_att = high_att*0.65+high*0.35;
-_denom   = low+mlo+mhi+high+0.001;
-centroid = (low*0.125+mlo*0.375+mhi*0.625+high*0.875)/_denom;
-flux_lo  = abs(q1-q2)+abs(q3-q4)+abs(q5-q6)+abs(q7-q8);
-flux_hi  = abs(q25-q26)+abs(q27-q28)+abs(q29-q30)+abs(q31-q32);
-flux_mid = abs(q12-q13)+abs(q14-q15)+abs(q20-q21)+abs(q22-q23);
-dq_lo    = q8-q9;
-dq_mid   = q16-q17;
-dq_hi    = q20-q21;
-dq_air   = q28-q29;
-spin_acc = spin_acc*0.92+dq_lo*0.08;
-decay    = 0.965-low_att*0.018;
-zoom     = 1.0+low_att*0.055-high_att*0.025;
-rot      = spin_acc*0.4+centroid*0.015*sin(time*0.7);
-warp     = 0.80+q1*0.20+q32*0.15+flux_hi*1.20;
-dx       = dq_lo*0.012+dq_air*0.005*sin(time*1.1);
-dy       = dq_hi*0.012+dq_mid*0.005*cos(time*0.9);
-wave_r   = q5*(1.0-centroid*0.5);
-wave_g   = q15*(0.5+centroid*0.5);
-wave_b   = q25*(0.3+centroid*0.7);
-wave_x   = 0.5+dq_lo*0.15;
-wave_y   = 0.5+dq_hi*0.15;
-wave_scale = 0.7+high_att*1.3;
-wave_a   = 0.5+mid_att*0.5;
-`;
-
-const PER_PIXEL = `
-warp = warp+q1*0.10*sin(rad*2.5+time*0.4);
-warp = warp+(q16+q17)*0.06*cos(ang*3.0+time*0.9);
-warp = warp+q32*0.08*sin(x*14.0+y*14.0+time*2.5)*rad*rad;
-zoom = zoom+low_att*rad*0.06;
-rot  = rot+flux_hi*0.08*sin(rad*4.0);
-dx   = dx+dq_lo*sin(ang)*0.010+q1*sin(rad*2.0+time*0.3)*0.020;
-dy   = dy+dq_hi*cos(ang)*0.010+q2*cos(rad*2.0+time*0.3)*0.020;
-dx   = dx+(q8-q9)*0.010;
-dy   = dy+(q20-q21)*0.010;
-dx   = dx+q32*sin(x*18.0+time*3.2)*0.006;
-dy   = dy+q31*cos(y*18.0+time*3.2)*0.006;
-`;
-
+// Patch only presets that have no existing per-frame equations (our simple JSON ones).
+// CDN presets have their own motion code and must not be clobbered.
 function patchPreset(base) {
-  // Detect camelCase vs snake_case convention, then APPEND — never replace —
-  // so the preset's own motion is preserved and our q1-q32 modulation adds on top.
   const pfKey   = 'perFrameEQs' in base ? 'perFrameEQs' : 'per_frame_eqs_eel';
   const ppKey   = 'perPixelEQs' in base ? 'perPixelEQs' : 'per_pixel_eqs_eel';
   const initKey = 'initEQs'     in base ? 'initEQs'     : 'init_eqs_eel';
+  const existing = (base[pfKey] || '').trim();
+  if (existing.length > 0) {
+    // CDN / rich preset — return as-is, don't clobber existing motion.
+    return base;
+  }
+  // Empty preset (our simple JSON ones) — apply full microtonal motion.
   return {
     ...base,
-    [initKey]: (base[initKey] || '') + PF_INIT,
-    [pfKey]:   (base[pfKey]   || '') + PER_FRAME,
-    [ppKey]:   (base[ppKey]   || '') + PER_PIXEL,
+    [initKey]: PF_INIT,
+    [pfKey]:   PER_FRAME,
+    [ppKey]:   PER_PIXEL,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. INIT — create the visualizer
+// VISUALIZER
 // ─────────────────────────────────────────────────────────────────────────────
 canvas.width  = window.innerWidth;
 canvas.height = window.innerHeight;
@@ -277,13 +223,18 @@ const viz = butterchurn.createVisualizer(audioCtx, canvas, {
 // ── Preset navigation ────────────────────────────────────────────────────────
 let currentIdx = -1;
 const BLEND_TIME = 2.7;
-const CYCLE_MS   = 60_000;
+const CYCLE_MS   = 30_000;   // cycle every 30 s
 
 function loadAtIndex(idx, blend) {
   if (!names.length) return null;
   currentIdx = ((idx % names.length) + names.length) % names.length;
   const name = names[currentIdx];
-  viz.loadPreset(patchPreset(allPresets[name]), blend);
+  try {
+    viz.loadPreset(patchPreset(allPresets[name]), blend);
+  } catch(e) {
+    logToSwift('[preset] load failed for "' + name + '": ' + e.message);
+    return null;
+  }
   logToSwift(name);
   return name;
 }
@@ -294,6 +245,11 @@ function loadNext(blend = BLEND_TIME) {
     : (currentIdx + 1) % names.length;
   const name = loadAtIndex(next, blend);
   if (name) showHUD('→  ' + name);
+  else if (names.length) {
+    // Current preset failed; skip ahead.
+    currentIdx = next;
+    loadNext(blend);
+  }
 }
 
 function loadPrev(blend = BLEND_TIME) {
@@ -310,47 +266,40 @@ function resetCycleTimer() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. BROWSER AUDIO PATH — disabled; Swift/BlackHole 2ch is always the source.
-//    AudioEngine.swift routes AVAudioEngine to BlackHole 2ch and calls
-//    window._updateQ([…]) on every audio buffer (~43 Hz).
-//    Un-comment startBrowserAudio() below to re-enable the JS mic fallback.
-// ─────────────────────────────────────────────────────────────────────────────
-let browserAnalyser = null;
-
-async function startBrowserAudio() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    const src    = audioCtx.createMediaStreamSource(stream);
-    const an     = audioCtx.createAnalyser();
-    an.fftSize               = 8192;
-    an.smoothingTimeConstant = 0.8;
-    src.connect(an);
-    viz.connectAudio(an);
-    browserAnalyser = an;
-    logToSwift('Browser mic connected');
-  } catch (e) {
-    logToSwift('Mic unavailable — using Swift audio path');
-  }
-}
-// startBrowserAudio();  ← disabled: BlackHole 2ch feeds audio via Swift
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 7. Q INJECTION
+// Q INJECTION — called by Swift on every audio buffer (~43 Hz)
+// Also synthesises bass/mid/treb/vol so CDN presets react to audio.
 // ─────────────────────────────────────────────────────────────────────────────
 let lastQ = new Float32Array(32);
 
 function injectQ(q) {
   for (let i = 0; i < 32; i++) lastQ[i] = q[i];
+
   const gv = viz.activePreset?.globalVars
           ?? viz.preset?.globalVars
           ?? viz._renderer?.activePreset?.globalVars
           ?? null;
   if (!gv) return;
+
+  // q1–q32 (microtonal bins, used by our custom presets)
   for (let i = 0; i < 32; i++) gv['q' + (i + 1)] = q[i];
+
+  // Milkdrop standard audio vars — used by CDN presets (bass/mid/treb/vol)
+  let b = 0, m = 0, t = 0;
+  for (let i = 0;  i < 8;  i++) b += q[i];
+  for (let i = 8;  i < 24; i++) m += q[i];
+  for (let i = 16; i < 32; i++) t += q[i];
+  b /= 8; m /= 16; t /= 16;
+  const v = (b + m + t) / 3;
+
+  gv.bass = b; gv.mid = m; gv.treb = t; gv.vol = v;
+  gv.bass_att = (gv.bass_att || 0) * 0.85 + b * 0.15;
+  gv.mid_att  = (gv.mid_att  || 0) * 0.85 + m * 0.15;
+  gv.treb_att = (gv.treb_att || 0) * 0.85 + t * 0.15;
+  gv.vol_att  = (gv.vol_att  || 0) * 0.85 + v * 0.15;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8. RENDER LOOP
+// RENDER LOOP
 // ─────────────────────────────────────────────────────────────────────────────
 let isPaused = false;
 
@@ -358,13 +307,6 @@ function render() {
   requestAnimationFrame(render);
   if (isPaused) return;
 
-  if (browserAnalyser && !window._swiftQActive) {
-    const fd = new Uint8Array(browserAnalyser.frequencyBinCount);
-    browserAnalyser.getByteFrequencyData(fd);
-    injectQ(computeQ(fd, browserAnalyser.fftSize, audioCtx.sampleRate));
-  }
-
-  // Mini-spectrum + level bar — only pay DOM cost when HUD is visible
   if (hudVisible) {
     for (let i = 0; i < 8; i++) {
       specBars[i].style.height = (lastQ[i] * 14).toFixed(1) + 'px';
@@ -378,7 +320,7 @@ function render() {
 requestAnimationFrame(render);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 9. SWIFT BRIDGE — called by WebViewContainer.Coordinator.injectQ()
+// SWIFT BRIDGE
 // ─────────────────────────────────────────────────────────────────────────────
 window._updateQ = function(q) {
   window._swiftQActive = true;
@@ -386,7 +328,7 @@ window._updateQ = function(q) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 10. PRESET INJECTION — called by PresetLoader.swift after page load
+// PRESET INJECTION
 // ─────────────────────────────────────────────────────────────────────────────
 window._addPresets = function(incoming) {
   const newNames = Object.keys(incoming);
@@ -396,55 +338,54 @@ window._addPresets = function(incoming) {
   names.push(...newNames);
   showHUD(names.length + ' presets ready', 4000);
   if (wasEmpty) {
-    currentIdx = Math.floor(Math.random() * names.length);
-    try {
-      loadAtIndex(currentIdx, 0.0);
-    } catch(e) {
-      // EEL compile error on first pick; the 60s cycle timer will try the next.
-      console.warn('[butterchurn] initial preset failed:', e.message);
-      currentIdx = -1;
-    }
+    loadNext(0);
   }
 };
-// Drain anything Swift enqueued before the module finished loading.
+
+// Drain anything Swift enqueued before the module was ready.
 (window._presetQueue || []).forEach(p => window._addPresets(p));
 window._presetQueue = null;
 
 window._viz = viz;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 11. KEYBOARD CONTROLS
+// CDN PRESET PACK — load butterchurn-presets (~150 presets) asynchronously.
+// Fires after Swift's bundled presets are already in the pool so they're not
+// displaced — CDN presets are simply added on top.
+// ─────────────────────────────────────────────────────────────────────────────
+import('https://esm.sh/butterchurn-presets@2.4.7')
+  .then(m => {
+    const mod = m.default ?? m;
+    const presets = typeof mod.getPresets === 'function' ? mod.getPresets() : mod;
+    const count = Object.keys(presets).length;
+    if (count > 0) {
+      window._addPresets(presets);
+      logToSwift('[presets] CDN pack: ' + count + ' presets added');
+    }
+  })
+  .catch(e => logToSwift('[presets] CDN pack failed: ' + e.message));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KEYBOARD
 // ─────────────────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   switch (e.key) {
     case 'n': case 'N': case 'ArrowRight':
-      e.preventDefault();
-      loadNext(); resetCycleTimer();
-      break;
-
+      e.preventDefault(); loadNext(); resetCycleTimer(); break;
     case 'p': case 'P': case 'ArrowLeft':
-      e.preventDefault();
-      loadPrev(); resetCycleTimer();
-      break;
-
+      e.preventDefault(); loadPrev(); resetCycleTimer(); break;
     case 'b': case 'B':
-      // Instant hard cut, no blend
-      e.preventDefault();
-      loadNext(0); resetCycleTimer();
-      break;
-
+      e.preventDefault(); loadNext(0); resetCycleTimer(); break;
     case ' ':
       e.preventDefault();
       isPaused = !isPaused;
       showHUD(isPaused ? '⏸  paused' : '▶  playing', 2000);
       break;
-
     case 'h': case 'H':
       hudVisible = !hudVisible;
       hud.classList.toggle('hidden', !hudVisible);
       clearTimeout(hudTimeout);
       break;
-
     case 'f': case 'F':
       if (document.fullscreenElement) document.exitFullscreen();
       else document.documentElement.requestFullscreen?.();
@@ -453,7 +394,7 @@ document.addEventListener('keydown', e => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 12. RESIZE
+// RESIZE
 // ─────────────────────────────────────────────────────────────────────────────
 const ro = new ResizeObserver(() => {
   canvas.width  = window.innerWidth;
@@ -462,6 +403,7 @@ const ro = new ResizeObserver(() => {
 });
 ro.observe(document.body);
 
+logToSwift('[WebView] butterchurn_host loaded');
 </script>
 </body>
 </html>
