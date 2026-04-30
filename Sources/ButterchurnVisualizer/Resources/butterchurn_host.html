@@ -1,335 +1,238 @@
 <!DOCTYPE html>
 <!--
-  butterchurn_host.html
-  Loads Butterchurn (WebGL Milkdrop) from the esm.sh CDN.
-  Runs inside a WKWebView with baseURL = https://milkdrop.local.
+  butterchurn_host.html — Milkdrop visualizer inside WKWebView.
 
-  Audio source: Swift AudioQueue → BlackHole 2ch → window._updateQ([32 floats])
-  Preset sources:
-    1. butterchurn-presets CDN pack (~150 presets, loaded async after page ready)
-    2. Swift PresetLoader.swift injects bundled .json / .milk presets
+  Preset sources (merged in order):
+    1. butterchurn-presets CDN (~150 presets, separate <script> so it
+       cannot break the main module if the network is unavailable)
+    2. Swift PresetLoader injects bundled .json / .milk presets
 
-  Keyboard controls:
-    N / → : next preset (2.7 s blend)
-    P / ← : previous preset
-    B      : instant cut to next (no blend)
-    Space  : pause / resume rendering
-    H      : toggle HUD
-    F      : request fullscreen
+  Audio: Swift AudioQueue → BlackHole 2ch → window._updateQ([32 floats])
+
+  Keys: N/→ next · P/← prev · B hard-cut · Space pause · H hud · F fullscreen
 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #000; overflow: hidden; width: 100vw; height: 100vh; }
-  canvas { display: block; width: 100%; height: 100%; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; width:100vw; height:100vh; }
+canvas { display:block; width:100%; height:100%; }
 
-  #hud {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    padding: 8px 16px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    pointer-events: none;
-    transition: opacity 0.6s;
-  }
-  #hud.hidden { opacity: 0; }
-
-  #spectrum {
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    height: 14px;
-  }
-  .spec-bar {
-    width: 6px;
-    background: rgba(255,255,255,0.25);
-    border-radius: 1px 1px 0 0;
-    min-height: 1px;
-  }
-
-  #preset-line {
-    color: rgba(255,255,255,0.38);
-    font: 11px/1.5 'SF Mono', 'Menlo', monospace;
-    text-shadow: 0 1px 4px #000;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  #hint-line {
-    color: rgba(255,255,255,0.18);
-    font: 10px/1.4 'SF Mono', 'Menlo', monospace;
-    text-shadow: 0 1px 3px #000;
-  }
-
-  #level-rail {
-    height: 2px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 1px;
-    overflow: hidden;
-  }
-  #level-fill {
-    height: 100%;
-    width: 0%;
-    background: rgba(255,255,255,0.35);
-    border-radius: 1px;
-  }
+#hud {
+  position:fixed; bottom:0; left:0; right:0;
+  padding:8px 16px 14px;
+  display:flex; flex-direction:column; gap:5px;
+  pointer-events:none; transition:opacity 0.6s;
+}
+#hud.hidden { opacity:0; }
+#spectrum { display:flex; align-items:flex-end; gap:2px; height:14px; }
+.spec-bar { width:6px; background:rgba(255,255,255,0.25); border-radius:1px 1px 0 0; min-height:1px; }
+#preset-line { color:rgba(255,255,255,0.38); font:11px/1.5 'SF Mono',monospace; text-shadow:0 1px 4px #000; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#hint-line   { color:rgba(255,255,255,0.18); font:10px/1.4 'SF Mono',monospace; text-shadow:0 1px 3px #000; }
+#level-rail  { height:2px; background:rgba(255,255,255,0.06); border-radius:1px; overflow:hidden; }
+#level-fill  { height:100%; width:0%; background:rgba(255,255,255,0.35); border-radius:1px; }
 </style>
 </head>
 <body>
-
 <canvas id="canvas"></canvas>
-
 <div id="hud">
   <div id="spectrum">
-    <div class="spec-bar" id="sb0"></div>
-    <div class="spec-bar" id="sb1"></div>
-    <div class="spec-bar" id="sb2"></div>
-    <div class="spec-bar" id="sb3"></div>
-    <div class="spec-bar" id="sb4"></div>
-    <div class="spec-bar" id="sb5"></div>
-    <div class="spec-bar" id="sb6"></div>
-    <div class="spec-bar" id="sb7"></div>
+    <div class="spec-bar" id="sb0"></div><div class="spec-bar" id="sb1"></div>
+    <div class="spec-bar" id="sb2"></div><div class="spec-bar" id="sb3"></div>
+    <div class="spec-bar" id="sb4"></div><div class="spec-bar" id="sb5"></div>
+    <div class="spec-bar" id="sb6"></div><div class="spec-bar" id="sb7"></div>
   </div>
   <div id="preset-line">Loading presets…</div>
-  <div id="hint-line">N=next  P=prev  B=cut  Space=pause  H=hud</div>
+  <div id="hint-line">N=next · P=prev · B=cut · Space=pause · H=hud</div>
   <div id="level-rail"><div id="level-fill"></div></div>
 </div>
 
-<!-- Pre-module queue: Swift may call _addPresets before the ES module is ready. -->
+<!-- Preset queue stub — Swift and the CDN module may call _addPresets before
+     the main module finishes loading.  We buffer here and drain on ready. -->
 <script>
 window._presetQueue = [];
 window._addPresets  = function(p) { window._presetQueue.push(p); };
 </script>
 
+<!-- ── MAIN MODULE ─────────────────────────────────────────────────────────── -->
 <script type="module">
 import butterchurn from 'https://esm.sh/butterchurn@2.6.7';
 
-const canvas     = document.getElementById('canvas');
-const presetLine = document.getElementById('preset-line');
-const hintLine   = document.getElementById('hint-line');
-const levelFill  = document.getElementById('level-fill');
-const hud        = document.getElementById('hud');
-const specBars   = Array.from({length: 8}, (_, i) => document.getElementById('sb' + i));
+// ── helpers ──────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const canvas     = $('canvas');
+const presetLine = $('preset-line');
+const hintLine   = $('hint-line');
+const levelFill  = $('level-fill');
+const hud        = $('hud');
+const specBars   = Array.from({length:8}, (_,i) => $('sb'+i));
 
-let hudVisible = true;
-let hudTimeout = null;
+let hudVisible = true, hudTimer = null;
 
-function showHUD(text, hideAfterMs = 3500) {
+function showHUD(text, ms = 3500) {
   presetLine.textContent = text;
   hud.classList.remove('hidden');
   hudVisible = true;
-  clearTimeout(hudTimeout);
-  if (hideAfterMs > 0) {
-    hudTimeout = setTimeout(() => {
-      hud.classList.add('hidden');
-      hudVisible = false;
-    }, hideAfterMs);
-  }
+  clearTimeout(hudTimer);
+  if (ms > 0) hudTimer = setTimeout(() => { hud.classList.add('hidden'); hudVisible = false; }, ms);
+}
+setTimeout(() => hintLine.style.display = 'none', 8000);
+
+function log(msg) {
+  try { window.webkit.messageHandlers.log.postMessage('[JS] ' + msg); } catch(_) {}
 }
 
-setTimeout(() => { hintLine.style.display = 'none'; }, 8000);
-
-const logToSwift = msg => {
-  try { window.webkit.messageHandlers.log.postMessage(msg); } catch(_) {}
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MICROTONAL EQUATIONS — appended to presets that have no existing equations.
-// CDN presets (which have their own motion code) are loaded as-is.
-// ─────────────────────────────────────────────────────────────────────────────
-const PF_INIT = 'low=0;mlo=0;mhi=0;high=0;centroid=0.5;flux_lo=0;flux_hi=0;' +
-                'flux_mid=0;low_att=0;high_att=0;mid_att=0;spin_acc=0;' +
-                'dq_lo=0;dq_hi=0;dq_mid=0;dq_air=0;';
+// ── microtonal EEL injected into presets that have empty equations ────────────
+// Base zoom/rot/warp are non-zero so there's motion even with no audio.
+const PF_INIT =
+  'low=0;mlo=0;mhi=0;high=0;centroid=0.5;' +
+  'flux_lo=0;flux_hi=0;flux_mid=0;' +
+  'low_att=0;high_att=0;mid_att=0;spin_acc=0;' +
+  'dq_lo=0;dq_hi=0;dq_mid=0;dq_air=0;';
 
 const PER_FRAME =
-`low=(q1+q2+q3+q4+q5+q6+q7+q8)*0.125;
-mlo=(q9+q10+q11+q12+q13+q14+q15+q16)*0.125;
-mhi=(q17+q18+q19+q20+q21+q22+q23+q24)*0.125;
-high=(q25+q26+q27+q28+q29+q30+q31+q32)*0.125;
-low_att=low_att*0.75+low*0.25;
-mid_att=mid_att*0.78+mlo*0.22+mhi*0.10;
-high_att=high_att*0.65+high*0.35;
-_denom=low+mlo+mhi+high+0.001;
-centroid=(low*0.125+mlo*0.375+mhi*0.625+high*0.875)/_denom;
-flux_lo=abs(q1-q2)+abs(q3-q4)+abs(q5-q6)+abs(q7-q8);
-flux_hi=abs(q25-q26)+abs(q27-q28)+abs(q29-q30)+abs(q31-q32);
-flux_mid=abs(q12-q13)+abs(q14-q15)+abs(q20-q21)+abs(q22-q23);
-dq_lo=q8-q9;dq_mid=q16-q17;dq_hi=q20-q21;dq_air=q28-q29;
-spin_acc=spin_acc*0.92+dq_lo*0.08;
-decay=0.965-low_att*0.018;
-zoom=1.0+low_att*0.055-high_att*0.025;
-rot=spin_acc*0.4+centroid*0.015*sin(time*0.7);
-warp=0.80+q1*0.20+q32*0.15+flux_hi*1.20;
-dx=dq_lo*0.012+dq_air*0.005*sin(time*1.1);
-dy=dq_hi*0.012+dq_mid*0.005*cos(time*0.9);
-wave_r=q5*(1.0-centroid*0.5);
-wave_g=q15*(0.5+centroid*0.5);
-wave_b=q25*(0.3+centroid*0.7);
-wave_x=0.5+dq_lo*0.15;wave_y=0.5+dq_hi*0.15;
-wave_scale=0.7+high_att*1.3;wave_a=0.5+mid_att*0.5;`;
+  'low=(q1+q2+q3+q4+q5+q6+q7+q8)*0.125;' +
+  'mlo=(q9+q10+q11+q12+q13+q14+q15+q16)*0.125;' +
+  'mhi=(q17+q18+q19+q20+q21+q22+q23+q24)*0.125;' +
+  'high=(q25+q26+q27+q28+q29+q30+q31+q32)*0.125;' +
+  'low_att=low_att*0.75+low*0.25;' +
+  'mid_att=mid_att*0.78+mlo*0.22+mhi*0.10;' +
+  'high_att=high_att*0.65+high*0.35;' +
+  '_denom=low+mlo+mhi+high+0.001;' +
+  'centroid=(low*0.125+mlo*0.375+mhi*0.625+high*0.875)/_denom;' +
+  'flux_lo=abs(q1-q2)+abs(q3-q4)+abs(q5-q6)+abs(q7-q8);' +
+  'flux_hi=abs(q25-q26)+abs(q27-q28)+abs(q29-q30)+abs(q31-q32);' +
+  'flux_mid=abs(q12-q13)+abs(q14-q15)+abs(q20-q21)+abs(q22-q23);' +
+  'dq_lo=q8-q9;dq_mid=q16-q17;dq_hi=q20-q21;dq_air=q28-q29;' +
+  'spin_acc=spin_acc*0.92+dq_lo*0.08;' +
+  'decay=0.965-low_att*0.018;' +
+  // Non-zero base values → tunnel/rotation even with no audio
+  'zoom=1.012+low_att*0.055-high_att*0.025;' +
+  'rot=0.005+spin_acc*0.4+centroid*0.015*sin(time*0.7);' +
+  'warp=1.00+q1*0.20+q32*0.15+flux_hi*1.20;' +
+  'dx=dq_lo*0.012+dq_air*0.005*sin(time*1.1);' +
+  'dy=dq_hi*0.012+dq_mid*0.005*cos(time*0.9);' +
+  'wave_r=q5*(1.0-centroid*0.5);' +
+  'wave_g=q15*(0.5+centroid*0.5);' +
+  'wave_b=q25*(0.3+centroid*0.7);' +
+  'wave_x=0.5+dq_lo*0.15;wave_y=0.5+dq_hi*0.15;' +
+  'wave_scale=0.7+high_att*1.3;wave_a=0.5+mid_att*0.5;';
 
 const PER_PIXEL =
-`warp=warp+q1*0.10*sin(rad*2.5+time*0.4);
-warp=warp+(q16+q17)*0.06*cos(ang*3.0+time*0.9);
-warp=warp+q32*0.08*sin(x*14.0+y*14.0+time*2.5)*rad*rad;
-zoom=zoom+low_att*rad*0.06;
-rot=rot+flux_hi*0.08*sin(rad*4.0);
-dx=dx+dq_lo*sin(ang)*0.010+q1*sin(rad*2.0+time*0.3)*0.020;
-dy=dy+dq_hi*cos(ang)*0.010+q2*cos(rad*2.0+time*0.3)*0.020;
-dx=dx+(q8-q9)*0.010;dy=dy+(q20-q21)*0.010;
-dx=dx+q32*sin(x*18.0+time*3.2)*0.006;
-dy=dy+q31*cos(y*18.0+time*3.2)*0.006;`;
+  'warp=warp+q1*0.10*sin(rad*2.5+time*0.4);' +
+  'warp=warp+(q16+q17)*0.06*cos(ang*3.0+time*0.9);' +
+  'warp=warp+q32*0.08*sin(x*14.0+y*14.0+time*2.5)*rad*rad;' +
+  'zoom=zoom+low_att*rad*0.06;' +
+  'rot=rot+flux_hi*0.08*sin(rad*4.0);' +
+  'dx=dx+dq_lo*sin(ang)*0.010+q1*sin(rad*2.0+time*0.3)*0.020;' +
+  'dy=dy+dq_hi*cos(ang)*0.010+q2*cos(rad*2.0+time*0.3)*0.020;' +
+  'dx=dx+(q8-q9)*0.010;dy=dy+(q20-q21)*0.010;' +
+  'dx=dx+q32*sin(x*18.0+time*3.2)*0.006;' +
+  'dy=dy+q31*cos(y*18.0+time*3.2)*0.006;';
 
-// Patch only presets that have no existing per-frame equations (our simple JSON ones).
-// CDN presets have their own motion code and must not be clobbered.
+// Only patch presets with no existing per-frame equations (our simple JSON ones).
+// CDN / rich presets already have motion — leave them untouched.
 function patchPreset(base) {
   const pfKey   = 'perFrameEQs' in base ? 'perFrameEQs' : 'per_frame_eqs_eel';
   const ppKey   = 'perPixelEQs' in base ? 'perPixelEQs' : 'per_pixel_eqs_eel';
   const initKey = 'initEQs'     in base ? 'initEQs'     : 'init_eqs_eel';
-  const existing = (base[pfKey] || '').trim();
-  if (existing.length > 0) {
-    // CDN / rich preset — return as-is, don't clobber existing motion.
-    return base;
-  }
-  // Empty preset (our simple JSON ones) — apply full microtonal motion.
-  return {
-    ...base,
-    [initKey]: PF_INIT,
-    [pfKey]:   PER_FRAME,
-    [ppKey]:   PER_PIXEL,
-  };
+  if ((base[pfKey] || '').trim().length > 0) return base;   // has own motion
+  return { ...base, [initKey]: PF_INIT, [pfKey]: PER_FRAME, [ppKey]: PER_PIXEL };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// VISUALIZER
-// ─────────────────────────────────────────────────────────────────────────────
+// ── visualizer ────────────────────────────────────────────────────────────────
 canvas.width  = window.innerWidth;
 canvas.height = window.innerHeight;
-
-const allPresets = {};
-const names      = [];
-
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
+const audioCtx = new AudioContext();
 const viz = butterchurn.createVisualizer(audioCtx, canvas, {
-  width:      canvas.width,
-  height:     canvas.height,
+  width: canvas.width, height: canvas.height,
   pixelRatio: window.devicePixelRatio || 1,
 });
 
-// ── Preset navigation ────────────────────────────────────────────────────────
-let currentIdx = -1;
-const BLEND_TIME = 2.7;
-const CYCLE_MS   = 30_000;   // cycle every 30 s
+// ── preset pool + navigation ──────────────────────────────────────────────────
+const allPresets = {};
+const names      = [];
+let currentIdx   = -1;
+const CYCLE_MS   = 25_000;
 
-function loadAtIndex(idx, blend) {
-  if (!names.length) return null;
-  currentIdx = ((idx % names.length) + names.length) % names.length;
-  const name = names[currentIdx];
+function tryLoad(idx, blend) {
+  if (!names.length) return false;
+  const name = names[idx];
   try {
     viz.loadPreset(patchPreset(allPresets[name]), blend);
+    currentIdx = idx;
+    log('preset: ' + name);
+    return true;
   } catch(e) {
-    logToSwift('[preset] load failed for "' + name + '": ' + e.message);
-    return null;
-  }
-  logToSwift(name);
-  return name;
-}
-
-function loadNext(blend = BLEND_TIME) {
-  const next = currentIdx < 0
-    ? Math.floor(Math.random() * names.length)
-    : (currentIdx + 1) % names.length;
-  const name = loadAtIndex(next, blend);
-  if (name) showHUD('→  ' + name);
-  else if (names.length) {
-    // Current preset failed; skip ahead.
-    currentIdx = next;
-    loadNext(blend);
+    log('preset FAIL "' + name + '": ' + e.message);
+    return false;
   }
 }
 
-function loadPrev(blend = BLEND_TIME) {
-  const prev = currentIdx <= 0 ? names.length - 1 : currentIdx - 1;
-  const name = loadAtIndex(prev, blend);
-  if (name) showHUD('←  ' + name);
+function loadNext(blend = 2.7) {
+  const n = names.length;
+  if (!n) return;
+  // Linear scan from current+1; give up after a full lap to avoid infinite loop.
+  const start = currentIdx < 0 ? Math.floor(Math.random() * n) : (currentIdx + 1) % n;
+  for (let i = 0; i < n; i++) {
+    const idx = (start + i) % n;
+    if (tryLoad(idx, blend)) { showHUD('→  ' + names[idx]); return; }
+  }
+}
+
+function loadPrev(blend = 2.7) {
+  const n = names.length;
+  if (!n) return;
+  const start = currentIdx <= 0 ? n - 1 : currentIdx - 1;
+  for (let i = 0; i < n; i++) {
+    const idx = ((start - i) % n + n) % n;
+    if (tryLoad(idx, blend)) { showHUD('←  ' + names[idx]); return; }
+  }
 }
 
 let cycleTimer = setInterval(loadNext, CYCLE_MS);
+function resetCycle() { clearInterval(cycleTimer); cycleTimer = setInterval(loadNext, CYCLE_MS); }
 
-function resetCycleTimer() {
-  clearInterval(cycleTimer);
-  cycleTimer = setInterval(loadNext, CYCLE_MS);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Q INJECTION — called by Swift on every audio buffer (~43 Hz)
-// Also synthesises bass/mid/treb/vol so CDN presets react to audio.
-// ─────────────────────────────────────────────────────────────────────────────
+// ── audio: inject q1-q32 + standard Milkdrop vars (bass/mid/treb/vol) ────────
 let lastQ = new Float32Array(32);
 
 function injectQ(q) {
   for (let i = 0; i < 32; i++) lastQ[i] = q[i];
-
   const gv = viz.activePreset?.globalVars
           ?? viz.preset?.globalVars
           ?? viz._renderer?.activePreset?.globalVars
           ?? null;
   if (!gv) return;
-
-  // q1–q32 (microtonal bins, used by our custom presets)
-  for (let i = 0; i < 32; i++) gv['q' + (i + 1)] = q[i];
-
-  // Milkdrop standard audio vars — used by CDN presets (bass/mid/treb/vol)
-  let b = 0, m = 0, t = 0;
-  for (let i = 0;  i < 8;  i++) b += q[i];
-  for (let i = 8;  i < 24; i++) m += q[i];
-  for (let i = 16; i < 32; i++) t += q[i];
-  b /= 8; m /= 16; t /= 16;
-  const v = (b + m + t) / 3;
-
-  gv.bass = b; gv.mid = m; gv.treb = t; gv.vol = v;
-  gv.bass_att = (gv.bass_att || 0) * 0.85 + b * 0.15;
-  gv.mid_att  = (gv.mid_att  || 0) * 0.85 + m * 0.15;
-  gv.treb_att = (gv.treb_att || 0) * 0.85 + t * 0.15;
-  gv.vol_att  = (gv.vol_att  || 0) * 0.85 + v * 0.15;
+  for (let i = 0; i < 32; i++) gv['q' + (i+1)] = q[i];
+  // Synthesise Milkdrop standard audio vars so CDN presets react to audio
+  let b=0, m=0, t=0;
+  for (let i=0;  i<8;  i++) b += q[i];
+  for (let i=8;  i<24; i++) m += q[i];
+  for (let i=16; i<32; i++) t += q[i];
+  b/=8; m/=16; t/=16; const v=(b+m+t)/3;
+  gv.bass=b; gv.mid=m; gv.treb=t; gv.vol=v;
+  gv.bass_att=(gv.bass_att||0)*0.85+b*0.15;
+  gv.mid_att =(gv.mid_att ||0)*0.85+m*0.15;
+  gv.treb_att=(gv.treb_att||0)*0.85+t*0.15;
+  gv.vol_att =(gv.vol_att ||0)*0.85+v*0.15;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RENDER LOOP
-// ─────────────────────────────────────────────────────────────────────────────
+// ── render loop ───────────────────────────────────────────────────────────────
 let isPaused = false;
-
-function render() {
+(function render() {
   requestAnimationFrame(render);
   if (isPaused) return;
-
   if (hudVisible) {
-    for (let i = 0; i < 8; i++) {
-      specBars[i].style.height = (lastQ[i] * 14).toFixed(1) + 'px';
-    }
-    const bass = (lastQ[0] + lastQ[1] + lastQ[2] + lastQ[3]) * 0.25;
-    levelFill.style.width = (bass * 100).toFixed(1) + '%';
+    for (let i=0; i<8; i++) specBars[i].style.height = (lastQ[i]*14).toFixed(1)+'px';
+    levelFill.style.width = ((lastQ[0]+lastQ[1]+lastQ[2]+lastQ[3])*25).toFixed(1)+'%';
   }
-
   viz.render();
-}
-requestAnimationFrame(render);
+})();
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SWIFT BRIDGE
-// ─────────────────────────────────────────────────────────────────────────────
-window._updateQ = function(q) {
-  window._swiftQActive = true;
-  injectQ(q);
-};
+// ── Swift bridges ─────────────────────────────────────────────────────────────
+window._updateQ = q => { window._swiftQActive = true; injectQ(q); };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PRESET INJECTION
-// ─────────────────────────────────────────────────────────────────────────────
 window._addPresets = function(incoming) {
   const newNames = Object.keys(incoming);
   if (!newNames.length) return;
@@ -337,73 +240,58 @@ window._addPresets = function(incoming) {
   Object.assign(allPresets, incoming);
   names.push(...newNames);
   showHUD(names.length + ' presets ready', 4000);
-  if (wasEmpty) {
-    loadNext(0);
-  }
+  log('presets total: ' + names.length);
+  if (wasEmpty) loadNext(0);   // instant cut on first load
 };
 
-// Drain anything Swift enqueued before the module was ready.
+// Drain queue (Swift or CDN module may have pushed while we were loading)
 (window._presetQueue || []).forEach(p => window._addPresets(p));
 window._presetQueue = null;
 
 window._viz = viz;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CDN PRESET PACK — load butterchurn-presets (~150 presets) asynchronously.
-// Fires after Swift's bundled presets are already in the pool so they're not
-// displaced — CDN presets are simply added on top.
-// ─────────────────────────────────────────────────────────────────────────────
-import('https://esm.sh/butterchurn-presets@2.4.7')
-  .then(m => {
-    const mod = m.default ?? m;
-    const presets = typeof mod.getPresets === 'function' ? mod.getPresets() : mod;
-    const count = Object.keys(presets).length;
-    if (count > 0) {
-      window._addPresets(presets);
-      logToSwift('[presets] CDN pack: ' + count + ' presets added');
-    }
-  })
-  .catch(e => logToSwift('[presets] CDN pack failed: ' + e.message));
-
-// ─────────────────────────────────────────────────────────────────────────────
-// KEYBOARD
-// ─────────────────────────────────────────────────────────────────────────────
+// ── keyboard ──────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
-  switch (e.key) {
-    case 'n': case 'N': case 'ArrowRight':
-      e.preventDefault(); loadNext(); resetCycleTimer(); break;
-    case 'p': case 'P': case 'ArrowLeft':
-      e.preventDefault(); loadPrev(); resetCycleTimer(); break;
-    case 'b': case 'B':
-      e.preventDefault(); loadNext(0); resetCycleTimer(); break;
-    case ' ':
-      e.preventDefault();
-      isPaused = !isPaused;
-      showHUD(isPaused ? '⏸  paused' : '▶  playing', 2000);
-      break;
-    case 'h': case 'H':
-      hudVisible = !hudVisible;
-      hud.classList.toggle('hidden', !hudVisible);
-      clearTimeout(hudTimeout);
-      break;
-    case 'f': case 'F':
-      if (document.fullscreenElement) document.exitFullscreen();
-      else document.documentElement.requestFullscreen?.();
-      break;
+  switch(e.key) {
+    case 'n': case 'N': case 'ArrowRight': e.preventDefault(); loadNext(); resetCycle(); break;
+    case 'p': case 'P': case 'ArrowLeft':  e.preventDefault(); loadPrev(); resetCycle(); break;
+    case 'b': case 'B': e.preventDefault(); loadNext(0); resetCycle(); break;
+    case ' ': e.preventDefault(); isPaused=!isPaused; showHUD(isPaused?'⏸ paused':'▶ playing',2000); break;
+    case 'h': case 'H': hudVisible=!hudVisible; hud.classList.toggle('hidden',!hudVisible); clearTimeout(hudTimer); break;
+    case 'f': case 'F': document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen?.(); break;
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RESIZE
-// ─────────────────────────────────────────────────────────────────────────────
-const ro = new ResizeObserver(() => {
-  canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight;
+// ── resize ────────────────────────────────────────────────────────────────────
+new ResizeObserver(() => {
+  canvas.width=window.innerWidth; canvas.height=window.innerHeight;
   viz.setRendererSize(canvas.width, canvas.height);
-});
-ro.observe(document.body);
+}).observe(document.body);
 
-logToSwift('[WebView] butterchurn_host loaded');
+log('main module ready');
 </script>
+
+<!-- ── CDN PRESET LOADER (separate module — failure here cannot break above) ── -->
+<script type="module">
+// Dynamic import inside its own isolated module.
+// If the CDN is unreachable this script silently does nothing.
+try {
+  const m = await import('https://esm.sh/butterchurn-presets@2.4.7');
+  const mod = m.default ?? m;
+  const presets = typeof mod.getPresets === 'function' ? mod.getPresets() : mod;
+  const count = presets ? Object.keys(presets).length : 0;
+  if (count > 0) {
+    if (typeof window._addPresets === 'function') {
+      window._addPresets(presets);
+    } else {
+      (window._presetQueue = window._presetQueue || []).push(presets);
+    }
+    try { window.webkit.messageHandlers.log.postMessage('[JS] CDN presets: ' + count); } catch(_) {}
+  }
+} catch(e) {
+  try { window.webkit.messageHandlers.log.postMessage('[JS] CDN failed: ' + e.message); } catch(_) {}
+}
+</script>
+
 </body>
 </html>
