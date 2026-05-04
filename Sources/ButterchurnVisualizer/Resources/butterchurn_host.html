@@ -2,12 +2,12 @@
 <!--
   butterchurn_host.html — Milkdrop visualizer inside WKWebView.
 
-  Preset sources (merged in order):
-    1. butterchurn-presets CDN (~150 presets, separate <script> so it
-       cannot break the main module if the network is unavailable)
-    2. Swift PresetLoader injects bundled .json / .milk presets
+  Preset sources: Swift PresetLoader injects all 1754 bundled .json presets.
 
   Audio: Swift AudioQueue → BlackHole 2ch → window._updateQ([32 floats])
+         Our 32 values are spread into a full Uint8Array(1024) frequency buffer
+         and passed directly to viz.render({frequencyData}) so butterchurn's
+         internal audio analysis (bass/mid/treb/vol uniforms + GLSL) sees them.
 
   Keys: N/→ next · P/← prev · B hard-cut · Space pause · H hud · F fullscreen
 -->
@@ -48,8 +48,6 @@ canvas { display:block; width:100%; height:100%; }
   <div id="level-rail"><div id="level-fill"></div></div>
 </div>
 
-<!-- Preset queue stub — Swift and the CDN module may call _addPresets before
-     the main module finishes loading.  We buffer here and drain on ready. -->
 <script>
 window._presetQueue = [];
 window._addPresets  = function(p) { window._presetQueue.push(p); };
@@ -59,7 +57,6 @@ window._addPresets  = function(p) { window._presetQueue.push(p); };
 <script type="module">
 import butterchurn from 'https://esm.sh/butterchurn@2.6.7';
 
-// ── helpers ──────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const canvas     = $('canvas');
 const presetLine = $('preset-line');
@@ -83,8 +80,7 @@ function log(msg) {
   try { window.webkit.messageHandlers.log.postMessage('[JS] ' + msg); } catch(_) {}
 }
 
-// ── microtonal EEL injected into presets that have empty equations ────────────
-// Base zoom/rot/warp are non-zero so there's motion even with no audio.
+// ── EEL fallback for presets that have no equations at all ────────────────────
 const PF_INIT =
   'low=0;mlo=0;mhi=0;high=0;centroid=0.5;' +
   'flux_lo=0;flux_hi=0;flux_mid=0;' +
@@ -107,15 +103,12 @@ const PER_FRAME =
   'dq_lo=q8-q9;dq_mid=q16-q17;dq_hi=q20-q21;dq_air=q28-q29;' +
   'spin_acc=spin_acc*0.92+dq_lo*0.08;' +
   'decay=0.965-low_att*0.018;' +
-  // Non-zero base values → tunnel/rotation even with no audio
   'zoom=1.012+low_att*0.055-high_att*0.025;' +
   'rot=0.005+spin_acc*0.4+centroid*0.015*sin(time*0.7);' +
   'warp=1.00+q1*0.20+q32*0.15+flux_hi*1.20;' +
   'dx=dq_lo*0.012+dq_air*0.005*sin(time*1.1);' +
   'dy=dq_hi*0.012+dq_mid*0.005*cos(time*0.9);' +
-  'wave_r=q5*(1.0-centroid*0.5);' +
-  'wave_g=q15*(0.5+centroid*0.5);' +
-  'wave_b=q25*(0.3+centroid*0.7);' +
+  'wave_r=0.4+bass*0.6;wave_g=0.3+mid*0.7;wave_b=0.5+treb*0.5;' +
   'wave_x=0.5+dq_lo*0.15;wave_y=0.5+dq_hi*0.15;' +
   'wave_scale=0.7+high_att*1.3;wave_a=0.5+mid_att*0.5;';
 
@@ -131,17 +124,13 @@ const PER_PIXEL =
   'dx=dx+q32*sin(x*18.0+time*3.2)*0.006;' +
   'dy=dy+q31*cos(y*18.0+time*3.2)*0.006;';
 
-// Only patch presets with absolutely no motion code — leave everything else untouched.
-// Three known formats:
-//   butterchurn-presets native : frame_eqs_str / warp (GLSL) / comp (GLSL)
-//   .milk-converted            : per_frame_eqs_eel
-//   legacy bundled JSON        : perFrameEQs
+// Leave all presets that already have any motion code completely untouched.
 function patchPreset(base) {
   const hasMotion =
-    (base.frame_eqs_str   || '').trim().length > 0 ||  // butterchurn-presets native JS
-    (base.per_frame_eqs_eel || '').trim().length > 0 || // .milk converted
-    (base.perFrameEQs     || '').trim().length > 0 ||  // legacy bundled JSON
-    base.warp || base.comp;                             // precompiled GLSL shaders
+    (base.frame_eqs_str    || '').trim().length > 0 ||
+    (base.per_frame_eqs_eel || '').trim().length > 0 ||
+    (base.perFrameEQs      || '').trim().length > 0 ||
+    base.warp || base.comp;
   if (hasMotion) return base;
   return { ...base, initEQs: PF_INIT, perFrameEQs: PER_FRAME, perPixelEQs: PER_PIXEL };
 }
@@ -159,7 +148,7 @@ const viz = butterchurn.createVisualizer(audioCtx, canvas, {
 const allPresets = {};
 const names      = [];
 let currentIdx   = -1;
-const CYCLE_MS   = 180_000;   // 3 minutes → full 1754-preset rotation ≈ 87 hours
+const CYCLE_MS   = 30_000;   // 30 s — full 1754-preset rotation ≈ 14.6 hours
 
 function tryLoad(idx, blend) {
   if (!names.length) return false;
@@ -178,7 +167,6 @@ function tryLoad(idx, blend) {
 function loadNext(blend = 2.7) {
   const n = names.length;
   if (!n) return;
-  // Linear scan from current+1; give up after a full lap to avoid infinite loop.
   const start = currentIdx < 0 ? Math.floor(Math.random() * n) : (currentIdx + 1) % n;
   for (let i = 0; i < n; i++) {
     const idx = (start + i) % n;
@@ -199,28 +187,39 @@ function loadPrev(blend = 2.7) {
 let cycleTimer = setInterval(loadNext, CYCLE_MS);
 function resetCycle() { clearInterval(cycleTimer); cycleTimer = setInterval(loadNext, CYCLE_MS); }
 
-// ── audio: inject q1-q32 + standard Milkdrop vars (bass/mid/treb/vol) ────────
+// ── audio: build a real frequency buffer and pass it to viz.render() ──────────
+// butterchurn.render({frequencyData, timeByteData}) feeds butterchurn's internal
+// audio analysis — this is the path that drives bass/mid/treb/vol GLSL uniforms
+// used by all 1754 native presets. Simply writing to globalVars is not enough.
+
+const FREQ_BINS = 1024;
+const freqData  = new Uint8Array(FREQ_BINS);   // frequency magnitude (0-255)
+const timeData  = new Uint8Array(FREQ_BINS);   // time-domain waveform
+timeData.fill(128);                             // 128 = silence in time domain
+
 let lastQ = new Float32Array(32);
 
-function injectQ(q) {
+function updateAudio(q) {
   for (let i = 0; i < 32; i++) lastQ[i] = q[i];
+
+  // Spread 32 microtonal bins across 1024 frequency bins with linear interpolation.
+  // Lower half of the spectrum gets more detail (log-ish perceptual weighting).
+  for (let b = 0; b < FREQ_BINS; b++) {
+    const frac = (b / FREQ_BINS) * 31;   // 0 .. 31
+    const lo   = Math.floor(frac) | 0;
+    const hi   = Math.min(lo + 1, 31);
+    const t    = frac - lo;
+    freqData[b] = ((q[lo] * (1 - t) + q[hi] * t) * 220) | 0;  // 0-220 headroom
+  }
+
+  // Also write into globalVars for any EEL-based presets that read q1..q32 directly.
   const gv = viz.activePreset?.globalVars
-          ?? viz.preset?.globalVars
-          ?? viz._renderer?.activePreset?.globalVars
-          ?? null;
-  if (!gv) return;
-  for (let i = 0; i < 32; i++) gv['q' + (i+1)] = q[i];
-  // Synthesise Milkdrop standard audio vars so CDN presets react to audio
-  let b=0, m=0, t=0;
-  for (let i=0;  i<8;  i++) b += q[i];
-  for (let i=8;  i<24; i++) m += q[i];
-  for (let i=16; i<32; i++) t += q[i];
-  b/=8; m/=16; t/=16; const v=(b+m+t)/3;
-  gv.bass=b; gv.mid=m; gv.treb=t; gv.vol=v;
-  gv.bass_att=(gv.bass_att||0)*0.85+b*0.15;
-  gv.mid_att =(gv.mid_att ||0)*0.85+m*0.15;
-  gv.treb_att=(gv.treb_att||0)*0.85+t*0.15;
-  gv.vol_att =(gv.vol_att ||0)*0.85+v*0.15;
+           ?? viz.preset?.globalVars
+           ?? viz._renderer?.activePreset?.globalVars
+           ?? null;
+  if (gv) {
+    for (let i = 0; i < 32; i++) gv['q' + (i + 1)] = q[i];
+  }
 }
 
 // ── render loop ───────────────────────────────────────────────────────────────
@@ -229,14 +228,15 @@ let isPaused = false;
   requestAnimationFrame(render);
   if (isPaused) return;
   if (hudVisible) {
-    for (let i=0; i<8; i++) specBars[i].style.height = (lastQ[i]*14).toFixed(1)+'px';
-    levelFill.style.width = ((lastQ[0]+lastQ[1]+lastQ[2]+lastQ[3])*25).toFixed(1)+'%';
+    for (let i = 0; i < 8; i++) specBars[i].style.height = (lastQ[i] * 14).toFixed(1) + 'px';
+    levelFill.style.width = ((lastQ[0]+lastQ[1]+lastQ[2]+lastQ[3]) * 25).toFixed(1) + '%';
   }
-  viz.render();
+  // Pass our frequency buffer directly — butterchurn uses it for bass/mid/treb/vol.
+  viz.render({ frequencyData: freqData, timeByteData: timeData });
 })();
 
 // ── Swift bridges ─────────────────────────────────────────────────────────────
-window._updateQ = q => { window._swiftQActive = true; injectQ(q); };
+window._updateQ = q => { updateAudio(q); };
 
 window._addPresets = function(incoming) {
   const newNames = Object.keys(incoming);
@@ -246,10 +246,9 @@ window._addPresets = function(incoming) {
   names.push(...newNames);
   showHUD(names.length + ' presets ready', 4000);
   log('presets total: ' + names.length);
-  if (wasEmpty) loadNext(0);   // instant cut on first load
+  if (wasEmpty) loadNext(0);
 };
 
-// Drain queue (Swift or CDN module may have pushed while we were loading)
 (window._presetQueue || []).forEach(p => window._addPresets(p));
 window._presetQueue = null;
 
@@ -274,28 +273,6 @@ new ResizeObserver(() => {
 }).observe(document.body);
 
 log('main module ready');
-</script>
-
-<!-- ── CDN PRESET LOADER (separate module — failure here cannot break above) ── -->
-<script type="module">
-// Dynamic import inside its own isolated module.
-// If the CDN is unreachable this script silently does nothing.
-try {
-  const m = await import('https://esm.sh/butterchurn-presets@2.4.7');
-  const mod = m.default ?? m;
-  const presets = typeof mod.getPresets === 'function' ? mod.getPresets() : mod;
-  const count = presets ? Object.keys(presets).length : 0;
-  if (count > 0) {
-    if (typeof window._addPresets === 'function') {
-      window._addPresets(presets);
-    } else {
-      (window._presetQueue = window._presetQueue || []).push(presets);
-    }
-    try { window.webkit.messageHandlers.log.postMessage('[JS] CDN presets: ' + count); } catch(_) {}
-  }
-} catch(e) {
-  try { window.webkit.messageHandlers.log.postMessage('[JS] CDN failed: ' + e.message); } catch(_) {}
-}
 </script>
 
 </body>
