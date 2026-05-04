@@ -131,14 +131,19 @@ const PER_PIXEL =
   'dx=dx+q32*sin(x*18.0+time*3.2)*0.006;' +
   'dy=dy+q31*cos(y*18.0+time*3.2)*0.006;';
 
-// Only patch presets with no existing per-frame equations (our simple JSON ones).
-// CDN / rich presets already have motion — leave them untouched.
+// Only patch presets with absolutely no motion code — leave everything else untouched.
+// Three known formats:
+//   butterchurn-presets native : frame_eqs_str / warp (GLSL) / comp (GLSL)
+//   .milk-converted            : per_frame_eqs_eel
+//   legacy bundled JSON        : perFrameEQs
 function patchPreset(base) {
-  const pfKey   = 'perFrameEQs' in base ? 'perFrameEQs' : 'per_frame_eqs_eel';
-  const ppKey   = 'perPixelEQs' in base ? 'perPixelEQs' : 'per_pixel_eqs_eel';
-  const initKey = 'initEQs'     in base ? 'initEQs'     : 'init_eqs_eel';
-  if ((base[pfKey] || '').trim().length > 0) return base;   // has own motion
-  return { ...base, [initKey]: PF_INIT, [pfKey]: PER_FRAME, [ppKey]: PER_PIXEL };
+  const hasMotion =
+    (base.frame_eqs_str   || '').trim().length > 0 ||  // butterchurn-presets native JS
+    (base.per_frame_eqs_eel || '').trim().length > 0 || // .milk converted
+    (base.perFrameEQs     || '').trim().length > 0 ||  // legacy bundled JSON
+    base.warp || base.comp;                             // precompiled GLSL shaders
+  if (hasMotion) return base;
+  return { ...base, initEQs: PF_INIT, perFrameEQs: PER_FRAME, perPixelEQs: PER_PIXEL };
 }
 
 // ── visualizer ────────────────────────────────────────────────────────────────
