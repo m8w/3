@@ -154,7 +154,7 @@ const viz = butterchurn.createVisualizer(audioCtx, canvas, {
 const allPresets = {};
 const names      = [];
 let currentIdx   = -1;
-const CYCLE_MS   = 25_000;
+const CYCLE_MS   = 180_000;   // 3 minutes → full 1754-preset rotation ≈ 87 hours
 
 function tryLoad(idx, blend) {
   if (!names.length) return false;
