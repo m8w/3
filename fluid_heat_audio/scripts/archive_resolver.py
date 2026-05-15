@@ -37,11 +37,13 @@ import threading
 import time
 from pathlib import Path
 
-try:
-    from pythonosc import dispatcher, osc_server, udp_client
-except ImportError:
-    sys.stderr.write("missing dep: pip install python-osc\n")
-    raise
+def _require_osc():
+    try:
+        from pythonosc import dispatcher, osc_server, udp_client  # noqa: F401
+        return dispatcher, osc_server, udp_client
+    except ImportError:
+        sys.stderr.write("missing dep: pip install python-osc\n")
+        sys.exit(1)
 
 
 def yt_dlp_bin() -> str:
@@ -133,14 +135,25 @@ class Resolver:
     """yt-dlp wrapper -- supports per-key in-flight deduplication."""
 
     def __init__(self, cache: LRUCache, height_max: int = 720,
-                 thumb_dir: Path | None = None):
+                 thumb_dir: Path | None = None,
+                 cookies_file: str = "",
+                 cookies_browser: str = ""):
         self.cache = cache
         self.height_max = height_max
         self.thumb_dir = thumb_dir
         if self.thumb_dir is not None:
             self.thumb_dir.mkdir(parents=True, exist_ok=True)
+        self.cookies_file = cookies_file
+        self.cookies_browser = cookies_browser
         self.inflight: dict[str, threading.Event] = {}
         self.inflight_lock = threading.Lock()
+
+    def _cookie_args(self) -> list[str]:
+        if self.cookies_file and Path(self.cookies_file).expanduser().exists():
+            return ["--cookies", str(Path(self.cookies_file).expanduser())]
+        if self.cookies_browser:
+            return ["--cookies-from-browser", self.cookies_browser]
+        return []
 
     def _begin(self, key: str) -> tuple[bool, threading.Event]:
         with self.inflight_lock:
@@ -162,6 +175,7 @@ class Resolver:
             out = subprocess.check_output(
                 [yt_dlp_bin(), "-g",
                  "-f", f"best[height<={self.height_max}][ext=mp4]/best[ext=mp4]/best",
+                 *self._cookie_args(),
                  key],
                 stderr=subprocess.DEVNULL, timeout=30).decode().splitlines()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
@@ -186,6 +200,7 @@ class Resolver:
                     [yt_dlp_bin(),
                      "-f", f"best[height<={self.height_max}][ext=mp4]/best[ext=mp4]/best",
                      "--no-progress",
+                     *self._cookie_args(),
                      "-o", tmp_template, key],
                     stderr=subprocess.DEVNULL, timeout=600)
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
@@ -209,6 +224,7 @@ class Resolver:
             subprocess.check_call(
                 [yt_dlp_bin(), "--skip-download", "--write-thumbnail",
                  "--convert-thumbnails", "jpg",
+                 *self._cookie_args(),
                  "-o", str(self.thumb_dir / f"{h}.%(ext)s"),
                  key],
                 stderr=subprocess.DEVNULL, timeout=60)
@@ -226,6 +242,7 @@ class Resolver:
 
 class ResolverServer:
     def __init__(self, args, cache: LRUCache, resolver: Resolver):
+        _, _, udp_client = _require_osc()
         self.args = args
         self.cache = cache
         self.resolver = resolver
@@ -319,6 +336,7 @@ class ResolverServer:
             self._send("/error", f"size_limit: {e}")
 
     def serve_forever(self):
+        dispatcher, osc_server, _ = _require_osc()
         d = dispatcher.Dispatcher()
         d.map("/resolve", self.on_resolve)
         d.map("/resolve_stream", self.on_resolve_stream)
@@ -351,6 +369,14 @@ def main():
                     help="Max video height passed to yt-dlp format selector")
     ap.add_argument("--workers", type=int, default=2,
                     help="Concurrent yt-dlp downloads")
+    ap.add_argument("--cookies-file",
+                    default=str(Path.home() / "ExternalRadio" / "youtube_cookies.txt"),
+                    help="Netscape-format cookies file (matches "
+                         "external_radio.py default). Empty disables.")
+    ap.add_argument("--cookies-browser", default="",
+                    help="Alternative: --cookies-from-browser value "
+                         "('safari', 'chrome', 'firefox'). Used if "
+                         "--cookies-file is missing.")
     ap.add_argument("--listen-host", default="127.0.0.1")
     ap.add_argument("--listen-port", type=int, default=7401)
     ap.add_argument("--reply-host", default="127.0.0.1")
@@ -360,7 +386,9 @@ def main():
     cache = LRUCache(Path(args.cache_dir).expanduser(),
                      int(args.cache_gb * (1 << 30)))
     thumb_dir = Path(args.thumb_dir).expanduser() if args.thumb_dir else None
-    resolver = Resolver(cache, height_max=args.height_max, thumb_dir=thumb_dir)
+    resolver = Resolver(cache, height_max=args.height_max, thumb_dir=thumb_dir,
+                        cookies_file=args.cookies_file,
+                        cookies_browser=args.cookies_browser)
     server = ResolverServer(args, cache, resolver)
     server.serve_forever()
 

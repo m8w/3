@@ -163,6 +163,10 @@ See [STREAMING.md](STREAMING.md) when the archive lives on YouTube and
 can't be fully copied to disk - a resolver sidecar uses yt-dlp + an LRU
 disk cache so only the working set ever lands locally.
 
+See [EXTERNAL_RADIO.md](EXTERNAL_RADIO.md) if you already drive audio with
+the `external_radio.py` script - the same CSV (`youtube_videos.csv`),
+cookies, and Google Drive file ID feed both systems verbatim.
+
 ## Notes
 
 The `jit.gl.slab` chain uses `@file` shader paths relative to the patch.

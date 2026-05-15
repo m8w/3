@@ -178,6 +178,82 @@ def heat_bucket_of(score: float) -> int:
     return max(0, min(4, int(score * 5)))
 
 
+# CSV column aliases - accepts both my schema and the ExternalRadio schema
+# (Title, Video_ID, Duration, YouTube_URL) so the same CSV feeds both systems.
+CSV_ALIASES = {
+    "url":        ("url", "URL", "YouTube_URL", "youtube_url", "webpage_url"),
+    "youtube_id": ("youtube_id", "Video_ID", "video_id", "id", "ID"),
+    "duration":   ("duration", "Duration"),
+    "width":      ("width", "Width"),
+    "height":     ("height", "Height"),
+    "fps":        ("fps", "FPS", "frame_rate"),
+    "title":      ("title", "Title", "name"),
+    "tags":       ("tags", "Tags", "description"),
+    "organic":    ("organic", "Organic"),
+    "energy":     ("energy", "Energy"),
+    "viscosity":  ("viscosity", "Viscosity"),
+    "channel":    ("channel", "Channel"),
+    "role":       ("role", "Role"),
+}
+
+
+def _pick(row: dict, key: str) -> str:
+    for alias in CSV_ALIASES.get(key, (key,)):
+        v = row.get(alias)
+        if v is not None and v != "":
+            return str(v).strip()
+    return ""
+
+
+def _parse_duration_str(raw: str) -> float | None:
+    """Accept seconds, HH:MM:SS, MM:SS."""
+    raw = (raw or "").strip()
+    if not raw or raw == "0":
+        return None
+    try:
+        if ":" in raw:
+            parts = [int(p) for p in raw.split(":")]
+            if len(parts) == 3:
+                return parts[0] * 3600 + parts[1] * 60 + parts[2]
+            if len(parts) == 2:
+                return parts[0] * 60 + parts[1]
+        return float(raw)
+    except (ValueError, TypeError):
+        return None
+
+
+def _download_gdrive(file_id: str, dst: Path) -> bool:
+    """Mirrors external_radio.py _resolve_csv behavior."""
+    try:
+        import requests
+    except ImportError:
+        print("warn: pip install requests for --gdrive-id download", file=sys.stderr)
+        return False
+    if dst.exists():
+        print(f"gdrive: using cached {dst}", file=sys.stderr)
+        return True
+    dl_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    session = requests.Session()
+    r = session.get(dl_url, stream=True, timeout=60)
+    token = None
+    for k, v in r.cookies.items():
+        if k.startswith("download_warning"):
+            token = v
+    if token:
+        r = session.get(dl_url + f"&confirm={token}", stream=True, timeout=120)
+    if r.status_code != 200:
+        print(f"gdrive: HTTP {r.status_code}", file=sys.stderr)
+        return False
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with dst.open("wb") as f:
+        for chunk in r.iter_content(chunk_size=32768):
+            if chunk:
+                f.write(chunk)
+    size_mb = dst.stat().st_size / 1e6
+    print(f"gdrive: downloaded {size_mb:.1f} MB -> {dst}", file=sys.stderr)
+    return True
+
+
 def walk_videos(roots: list[Path]):
     for root in roots:
         for dirpath, _, filenames in os.walk(root):
@@ -218,55 +294,84 @@ def process(p: Path, probe_bin: str, channel: str, role: str) -> tuple[str, dict
 
 
 def ingest_url_csv(csv_path: Path, channel: str, role: str,
-                   conn: sqlite3.Connection) -> int:
-    """Ingest remote URLs from a CSV. Header columns recognised:
-        url             (required)            -> stored in `path`, remote=1
-        youtube_id      (optional)            -> stored in `youtube_id`
-        duration        (optional, seconds)
-        width, height, fps, codec             (optional)
-        organic         (optional 0..1)
-        energy, viscosity (optional 0..1)
-        tags            (optional)
-        channel, role   (optional, override CLI)
+                   conn: sqlite3.Connection,
+                   min_duration: float = 0.0) -> int:
+    """Ingest remote URLs from a CSV. Accepts both schemas:
+
+        my schema   :  url, youtube_id, duration, organic, energy, viscosity, ...
+        ExternalRadio: Title, Video_ID, Duration, YouTube_URL  (with aliases)
+
+    Title is used as a heuristic to seed organic/energy/viscosity when those
+    columns are absent (matches youtube_to_csv.py scoring).
     """
     import csv
     n = 0
-    with csv_path.open(newline="", encoding="utf-8") as f:
+    skipped = 0
+    with csv_path.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         for r in reader:
-            url = (r.get("url") or "").strip()
+            url   = _pick(r, "url")
+            vid   = _pick(r, "youtube_id")
+            if not url and vid:
+                url = f"https://www.youtube.com/watch?v={vid}"
             if not url:
+                skipped += 1
                 continue
 
-            def fnum(k, default=None):
-                v = r.get(k)
-                if v is None or v == "":
-                    return default
-                try:
-                    return float(v)
-                except ValueError:
-                    return default
+            title = _pick(r, "title") or url
+            dur   = _parse_duration_str(_pick(r, "duration"))
+            if min_duration > 0 and dur is not None and dur < min_duration:
+                skipped += 1
+                continue
 
-            organic = fnum("organic", 0.5)
+            # use existing organic if provided, else infer from title
+            organic_raw = _pick(r, "organic")
+            energy_raw  = _pick(r, "energy")
+            visc_raw    = _pick(r, "viscosity")
+            try:
+                fps_val = float(_pick(r, "fps") or 0)
+            except ValueError:
+                fps_val = 0.0
+
+            if organic_raw and energy_raw and visc_raw:
+                try:
+                    organic = float(organic_raw)
+                    energy_v = float(energy_raw)
+                    visc_v   = float(visc_raw)
+                except ValueError:
+                    organic = infer_organic(Path(title), 0, 0, dur or 0.0)
+                    energy_v, visc_v = infer_energy_viscosity(
+                        Path(title), organic, fps_val)
+            else:
+                organic = infer_organic(Path(title), 0, 0, dur or 0.0)
+                energy_v, visc_v = infer_energy_viscosity(
+                    Path(title), organic, fps_val)
+
+            def _intify(s):
+                try:
+                    return int(float(s)) if s else None
+                except ValueError:
+                    return None
+
             row = {
                 "path":     url,
                 "size":     None,
-                "duration": fnum("duration"),
-                "width":    int(fnum("width", 0) or 0) or None,
-                "height":   int(fnum("height", 0) or 0) or None,
-                "fps":      fnum("fps"),
-                "codec":    r.get("codec", "") or "",
+                "duration": dur,
+                "width":    _intify(_pick(r, "width")),
+                "height":   _intify(_pick(r, "height")),
+                "fps":      fps_val or None,
+                "codec":    "",
                 "ctime":    None,
                 "mtime":    None,
-                "tags":     r.get("tags", "") or "",
+                "tags":     _pick(r, "tags") or title[:120],
                 "organic":  organic,
                 "heat_bucket": heat_bucket_of(organic),
-                "channel":  (r.get("channel") or channel),
-                "role":     (r.get("role") or role),
-                "energy":   fnum("energy", 0.5),
-                "viscosity":fnum("viscosity", 0.5),
+                "channel":  (_pick(r, "channel") or channel),
+                "role":     (_pick(r, "role") or role),
+                "energy":   energy_v,
+                "viscosity":visc_v,
                 "remote":   1,
-                "youtube_id": r.get("youtube_id", "") or "",
+                "youtube_id": vid,
             }
             try:
                 conn.execute("""INSERT OR REPLACE INTO videos
@@ -283,6 +388,9 @@ def ingest_url_csv(csv_path: Path, channel: str, role: str,
             if n % 500 == 0:
                 conn.commit()
     conn.commit()
+    if skipped:
+        print(f"skipped {skipped} rows (missing url, or under min_duration)",
+              file=sys.stderr)
     return n
 
 
@@ -293,7 +401,16 @@ def main():
                     help="Directories to scan recursively (local files)")
     ap.add_argument("--urls", default="",
                     help="CSV file of remote URLs (use instead of --roots, "
-                         "or in addition to mix local + remote in one db)")
+                         "or in addition to mix local + remote in one db). "
+                         "Accepts both my schema (url,youtube_id,...) and "
+                         "ExternalRadio schema (Title,Video_ID,Duration,YouTube_URL).")
+    ap.add_argument("--gdrive-id", default="",
+                    help="Google Drive file ID to download the CSV from "
+                         "(matches the external_radio.py pattern). "
+                         "Cached locally; use with --urls.")
+    ap.add_argument("--min-duration", type=float, default=0.0,
+                    help="Skip remote rows under this many seconds "
+                         "(mirrors min_duration_seconds in external_radio.py).")
     ap.add_argument("--db", default="videos.sqlite", help="SQLite output path")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--probe", default=shutil.which("ffprobe") or "ffprobe")
@@ -324,11 +441,16 @@ def main():
             conn.execute(f"ALTER TABLE videos ADD COLUMN {col} {decl}")
     conn.commit()
 
-    if args.urls:
-        csv_path = Path(args.urls).expanduser()
+    if args.urls or args.gdrive_id:
+        csv_path = Path(args.urls).expanduser() if args.urls else \
+            Path("~/ExternalRadio/youtube_videos_gdrive.csv").expanduser()
+        if args.gdrive_id:
+            if not _download_gdrive(args.gdrive_id, csv_path):
+                sys.exit("gdrive download failed")
         if not csv_path.is_file():
             sys.exit(f"--urls file not found: {csv_path}")
-        n = ingest_url_csv(csv_path, args.channel, args.role, conn)
+        n = ingest_url_csv(csv_path, args.channel, args.role, conn,
+                           min_duration=args.min_duration)
         print(f"ingested {n} remote rows from {csv_path}", file=sys.stderr)
         if not roots:
             conn.close()
