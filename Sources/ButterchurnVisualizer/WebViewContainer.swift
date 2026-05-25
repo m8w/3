@@ -7,8 +7,6 @@ struct WebViewContainer: NSViewRepresentable {
 
     @ObservedObject var audio: AudioEngine
 
-    // MARK: NSViewRepresentable
-
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -16,18 +14,18 @@ struct WebViewContainer: NSViewRepresentable {
         context.coordinator.webView = webView
         loadHost(into: webView)
 
-        // Wire audio → JS injection.
-        // The AudioEngine fires onQ on the main thread; the coordinator
-        // calls window._updateQ([...]) inside the WebView.
         audio.onQ = { [weak coord = context.coordinator] q in
             coord?.injectQ(q)
         }
+
+        // Intercept key events at the app level so they always reach the
+        // visualizer regardless of which view is first responder.
+        context.coordinator.installKeyMonitor()
 
         return webView
     }
 
     func updateNSView(_ nsView: WKWebView, context: Context) {
-        // Re-wire if the audio engine instance changes.
         audio.onQ = { [weak coord = context.coordinator] q in
             coord?.injectQ(q)
         }
@@ -37,25 +35,18 @@ struct WebViewContainer: NSViewRepresentable {
 
     private func buildWebView(coordinator: Coordinator) -> WKWebView {
         let config = WKWebViewConfiguration()
-
-        // Allow Web Audio API and media playback without a user gesture.
-        // Required so Butterchurn can create an AudioContext on load.
         config.mediaTypesRequiringUserActionForPlayback = []
 
         let prefs = WKWebpagePreferences()
         prefs.allowsContentJavaScript = true
         config.defaultWebpagePreferences = prefs
 
-        // Message handler lets JS send status strings back to Swift (optional).
         config.userContentController.add(coordinator, name: "log")
 
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.navigationDelegate = coordinator
-        // isOpaque is read-only on WKWebView; use setValue to suppress white flash.
         wv.setValue(false, forKey: "drawsBackground")
         wv.layer?.backgroundColor = .black
-
-        // Hide the scroll indicators that can flash during resize.
         wv.enclosingScrollView?.hasHorizontalScroller = false
         wv.enclosingScrollView?.hasVerticalScroller   = false
 
@@ -70,11 +61,7 @@ struct WebViewContainer: NSViewRepresentable {
             print("[WebViewContainer] butterchurn_host.html not found in bundle")
             return
         }
-        // Use an HTTPS base URL so the ESM imports from esm.sh/unpkg work.
-        // WKWebView blocks cross-origin requests from file:// origins,
-        // but allows them from https:// origins (CDN servers set CORS headers).
-        webView.loadHTMLString(html,
-                               baseURL: URL(string: "https://milkdrop.local"))
+        webView.loadHTMLString(html, baseURL: URL(string: "https://milkdrop.local"))
     }
 
     // MARK: - Coordinator
@@ -82,11 +69,43 @@ struct WebViewContainer: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
 
         weak var webView: WKWebView?
+        private var keyMonitor: Any?
 
-        // Called by AudioEngine.onQ on the main thread.
+        // MARK: Key handling
+        // NSEvent monitor works regardless of first-responder state.
+        func installKeyMonitor() {
+            guard keyMonitor == nil else { return }
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                self?.forwardKey(event)
+                return nil   // consume — stop the event propagating further
+            }
+        }
+
+        private func forwardKey(_ event: NSEvent) {
+            // Map NSEvent → the JS KeyboardEvent key string butterchurn_host.html expects.
+            let key: String
+            switch event.keyCode {
+            case 123: key = "ArrowLeft"
+            case 124: key = "ArrowRight"
+            default:
+                guard let ch = event.charactersIgnoringModifiers?.lowercased(),
+                      !ch.isEmpty else { return }
+                key = ch
+            }
+            // Escape single-quotes in the key string (safety — keys are single chars).
+            let safe = key.replacingOccurrences(of: "'", with: "\\'")
+            let js = "document.dispatchEvent(new KeyboardEvent('keydown',{key:'\(safe)',bubbles:true}));"
+            webView?.evaluateJavaScript(js, completionHandler: nil)
+        }
+
+        deinit {
+            if let m = keyMonitor { NSEvent.removeMonitor(m) }
+        }
+
+        // MARK: Audio injection
+
         func injectQ(_ q: [Float]) {
             guard let wv = webView else { return }
-            // Build compact JS: window._updateQ([0.12,0.34,...])
             let arr = q.map { String(format: "%.5f", $0) }.joined(separator: ",")
             let js  = "if(typeof window._updateQ==='function')window._updateQ([\(arr)]);"
             wv.evaluateJavaScript(js, completionHandler: nil)
@@ -96,6 +115,10 @@ struct WebViewContainer: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             print("[WebView] butterchurn_host loaded")
+            // Make webView first responder so it can also receive events natively.
+            DispatchQueue.main.async {
+                webView.window?.makeFirstResponder(webView)
+            }
             PresetLoader.injectAll(into: webView)
         }
 
@@ -105,7 +128,7 @@ struct WebViewContainer: NSViewRepresentable {
             print("[WebView] navigation error: \(error.localizedDescription)")
         }
 
-        // MARK: WKScriptMessageHandler — receives window.webkit.messageHandlers.log.postMessage(…)
+        // MARK: WKScriptMessageHandler
 
         func userContentController(_ ucc: WKUserContentController,
                                    didReceive message: WKScriptMessage) {

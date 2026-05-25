@@ -67,14 +67,12 @@ const specBars   = Array.from({length:8}, (_,i) => $('sb'+i));
 
 let hudVisible = true, hudTimer = null;
 
-function showHUD(text, ms = 3500) {
+function showHUD(text) {
   presetLine.textContent = text;
+  if (!hudVisible) return;   // don't flash HUD back if user hid it
   hud.classList.remove('hidden');
-  hudVisible = true;
-  clearTimeout(hudTimer);
-  if (ms > 0) hudTimer = setTimeout(() => { hud.classList.add('hidden'); hudVisible = false; }, ms);
 }
-setTimeout(() => hintLine.style.display = 'none', 8000);
+setTimeout(() => hintLine.style.display = 'none', 12000);
 
 function log(msg) {
   try { window.webkit.messageHandlers.log.postMessage('[JS] ' + msg); } catch(_) {}
@@ -261,7 +259,7 @@ document.addEventListener('keydown', e => {
     case 'p': case 'P': case 'ArrowLeft':  e.preventDefault(); loadPrev(); resetCycle(); break;
     case 'b': case 'B': e.preventDefault(); loadNext(0); resetCycle(); break;
     case ' ': e.preventDefault(); isPaused=!isPaused; showHUD(isPaused?'⏸ paused':'▶ playing',2000); break;
-    case 'h': case 'H': hudVisible=!hudVisible; hud.classList.toggle('hidden',!hudVisible); clearTimeout(hudTimer); break;
+    case 'h': case 'H': hudVisible=!hudVisible; hud.classList.toggle('hidden',!hudVisible); break;
     case 'f': case 'F': document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen?.(); break;
   }
 });
