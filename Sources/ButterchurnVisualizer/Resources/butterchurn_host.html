@@ -253,15 +253,27 @@ window._presetQueue = null;
 
 window._viz = viz;
 
-// ── keyboard ──────────────────────────────────────────────────────────────────
+// ── Swift key bridge (called directly from Swift evaluateJavaScript) ──────────
+window._keyCommand = function(cmd) {
+  switch(cmd) {
+    case 'next':  loadNext();    resetCycle(); showHUD('→  ' + (names[currentIdx]||'')); break;
+    case 'prev':  loadPrev();    resetCycle(); showHUD('←  ' + (names[currentIdx]||'')); break;
+    case 'cut':   loadNext(0);   resetCycle(); break;
+    case 'pause': isPaused=!isPaused; showHUD(isPaused?'⏸ paused':'▶ playing'); break;
+    case 'hud':   hudVisible=!hudVisible; hud.classList.toggle('hidden',!hudVisible); break;
+  }
+};
+
+// ── keyboard (fallback for when WKWebView has focus) ─────────────────────────
 document.addEventListener('keydown', e => {
   switch(e.key) {
-    case 'n': case 'N': case 'ArrowRight': e.preventDefault(); loadNext(); resetCycle(); break;
-    case 'p': case 'P': case 'ArrowLeft':  e.preventDefault(); loadPrev(); resetCycle(); break;
-    case 'b': case 'B': e.preventDefault(); loadNext(0); resetCycle(); break;
-    case ' ': e.preventDefault(); isPaused=!isPaused; showHUD(isPaused?'⏸ paused':'▶ playing',2000); break;
-    case 'h': case 'H': hudVisible=!hudVisible; hud.classList.toggle('hidden',!hudVisible); break;
-    case 'f': case 'F': document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen?.(); break;
+    case 'n': case 'N': case 'ArrowRight': e.preventDefault(); window._keyCommand('next'); break;
+    case 'p': case 'P': case 'ArrowLeft':  e.preventDefault(); window._keyCommand('prev'); break;
+    case 'b': case 'B': e.preventDefault(); window._keyCommand('cut'); break;
+    case ' ': e.preventDefault(); window._keyCommand('pause'); break;
+    case 'h': case 'H': window._keyCommand('hud'); break;
+  }
+});
   }
 });
 

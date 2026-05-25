@@ -82,20 +82,23 @@ struct WebViewContainer: NSViewRepresentable {
         }
 
         private func forwardKey(_ event: NSEvent) {
-            // Map NSEvent → the JS KeyboardEvent key string butterchurn_host.html expects.
-            let key: String
+            let cmd: String
             switch event.keyCode {
-            case 123: key = "ArrowLeft"
-            case 124: key = "ArrowRight"
+            case 123: cmd = "prev"    // ←
+            case 124: cmd = "next"    // →
             default:
-                guard let ch = event.charactersIgnoringModifiers?.lowercased(),
-                      !ch.isEmpty else { return }
-                key = ch
+                guard let ch = event.charactersIgnoringModifiers?.lowercased() else { return }
+                switch ch {
+                case "n":  cmd = "next"
+                case "p":  cmd = "prev"
+                case "b":  cmd = "cut"
+                case " ":  cmd = "pause"
+                case "h":  cmd = "hud"
+                default:   return
+                }
             }
-            // Escape single-quotes in the key string (safety — keys are single chars).
-            let safe = key.replacingOccurrences(of: "'", with: "\\'")
-            let js = "document.dispatchEvent(new KeyboardEvent('keydown',{key:'\(safe)',bubbles:true}));"
-            webView?.evaluateJavaScript(js, completionHandler: nil)
+            print("[Key] \(cmd)")
+            webView?.evaluateJavaScript("window._keyCommand('\(cmd)');", completionHandler: nil)
         }
 
         deinit {
