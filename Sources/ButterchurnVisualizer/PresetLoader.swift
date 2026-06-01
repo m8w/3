@@ -97,17 +97,12 @@ final class PresetLoader {
         }
     }
 
-    /// Walk the Resources bundle tree and return URLs of every .json and .milk file.
+    /// Walk the entire Resources bundle tree and return URLs of every .json and .milk file.
     private static func findPresetURLs() -> [URL] {
         guard let resourceURL = Bundle.module.resourceURL else { return [] }
 
-        // Prefer a dedicated `presets/` subfolder when it exists.
-        let dedicatedURL = resourceURL.appendingPathComponent("presets")
-        let searchURL    = FileManager.default.fileExists(atPath: dedicatedURL.path)
-                         ? dedicatedURL : resourceURL
-
         guard let enumerator = FileManager.default.enumerator(
-            at: searchURL,
+            at: resourceURL,
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
