@@ -54,6 +54,19 @@ struct WebViewContainer: NSViewRepresentable {
     }
 
     private func loadHost(into webView: WKWebView) {
+        // Inject bundled butterchurn.min.js before the page loads so the module
+        // can use window.butterchurn without a CDN fetch.
+        if let bcURL    = Bundle.module.url(forResource: "butterchurn.min", withExtension: "js"),
+           let bcScript = try? String(contentsOf: bcURL, encoding: .utf8) {
+            let userScript = WKUserScript(source: bcScript,
+                                          injectionTime: .atDocumentStart,
+                                          forMainFrameOnly: true)
+            webView.configuration.userContentController.addUserScript(userScript)
+            print("[WebViewContainer] butterchurn.min.js injected from bundle")
+        } else {
+            print("[WebViewContainer] butterchurn.min.js not found — will try CDN")
+        }
+
         guard let url  = Bundle.module.url(forResource: "butterchurn_host",
                                            withExtension: "html"),
               let html = try? String(contentsOf: url, encoding: .utf8)

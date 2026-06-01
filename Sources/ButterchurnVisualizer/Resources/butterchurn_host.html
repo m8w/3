@@ -65,15 +65,18 @@ const levelFill  = $('level-fill');
 const hud        = $('hud');
 const specBars   = Array.from({length:8}, (_,i) => $('sb'+i));
 
-// Dynamic import so CDN failures are catchable and visible in the HUD.
-let butterchurn;
-try {
-  presetLine.textContent = 'Fetching Butterchurn engine…';
-  butterchurn = (await import('https://esm.sh/butterchurn@2.6.7')).default;
-} catch(err) {
-  presetLine.textContent = 'CDN load failed — check internet: ' + err.message;
-  try { window.webkit.messageHandlers.log.postMessage('[JS] CDN FAIL: ' + err); } catch(_) {}
-  throw err;   // stop module execution
+// Prefer the bundled butterchurn.min.js injected by WebViewContainer (no CDN needed).
+// Fall back to esm.sh if the bundle wasn't found in the app resources.
+let butterchurn = window.butterchurn;
+if (!butterchurn) {
+  try {
+    presetLine.textContent = 'Fetching Butterchurn from CDN…';
+    butterchurn = (await import('https://esm.sh/butterchurn@2.6.7')).default;
+  } catch(err) {
+    presetLine.textContent = 'Load failed — run: curl .../butterchurn.min.js into Resources/';
+    try { window.webkit.messageHandlers.log.postMessage('[JS] butterchurn load FAIL: ' + err); } catch(_) {}
+    throw err;
+  }
 }
 
 let hudVisible = true, hudTimer = null;
