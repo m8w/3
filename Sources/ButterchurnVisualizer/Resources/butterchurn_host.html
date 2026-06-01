@@ -123,15 +123,34 @@ const PER_PIXEL =
   'dx=dx+q32*sin(x*18.0+time*3.2)*0.006;' +
   'dy=dy+q31*cos(y*18.0+time*3.2)*0.006;';
 
-// Leave all presets that already have any motion code completely untouched.
+// patchPreset strategy:
+//  • GLSL shader presets (warp/comp strings)  → return unchanged; shader drives animation
+//  • Native EEL2 (per_frame_eqs_eel / perFrameEQs) → append our microtonal equations
+//  • Pre-compiled JS (frame_eqs_str) → STRIP these: some use 'return' as a variable
+//    name which causes SyntaxError in butterchurn's new Function() constructor.
+//    Replace with our EEL2 equations; baseVals still vary per preset (visual diversity).
 function patchPreset(base) {
-  const hasMotion =
-    (base.frame_eqs_str    || '').trim().length > 0 ||
-    (base.per_frame_eqs_eel || '').trim().length > 0 ||
-    (base.perFrameEQs      || '').trim().length > 0 ||
-    base.warp || base.comp;
-  if (hasMotion) return base;
-  return { ...base, initEQs: PF_INIT, perFrameEQs: PER_FRAME, perPixelEQs: PER_PIXEL };
+  // GLSL shader presets — keep entirely as-is.
+  if (typeof base.warp === 'string' && base.warp.includes('shader_body')) return base;
+
+  // Native EEL2 — append our equations so preset motion + microtonal audio both run.
+  const pfEEL = base.per_frame_eqs_eel || base.perFrameEQs || '';
+  const ppEEL = base.per_pixel_eqs_eel || base.perPixelEQs || '';
+  if (pfEEL.trim()) {
+    const pfKey   = 'perFrameEQs' in base ? 'perFrameEQs' : 'per_frame_eqs_eel';
+    const ppKey   = 'perPixelEQs' in base ? 'perPixelEQs' : 'per_pixel_eqs_eel';
+    const initKey = 'initEQs'     in base ? 'initEQs'     : 'init_eqs_eel';
+    return {
+      ...base,
+      [initKey]: (base[initKey] || '') + PF_INIT,
+      [pfKey]:   pfEEL + PER_FRAME,
+      [ppKey]:   ppEEL + PER_PIXEL,
+    };
+  }
+
+  // Pre-compiled format (frame_eqs_str / pixel_eqs_str) — strip and replace.
+  const { init_eqs_str, frame_eqs_str, pixel_eqs_str, ...rest } = base;
+  return { ...rest, per_frame_eqs_eel: PER_FRAME, per_pixel_eqs_eel: PER_PIXEL };
 }
 
 // ── visualizer ────────────────────────────────────────────────────────────────
