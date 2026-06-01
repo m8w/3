@@ -65,18 +65,18 @@ const levelFill  = $('level-fill');
 const hud        = $('hud');
 const specBars   = Array.from({length:8}, (_,i) => $('sb'+i));
 
-// Prefer the bundled butterchurn.min.js injected by WebViewContainer (no CDN needed).
-// Fall back to esm.sh if the bundle wasn't found in the app resources.
+// butterchurn.min.js is injected by WebViewContainer via URLSession (Swift process
+// has full network access; WKWebView content process is sandboxed on macOS 15/26).
+// window.butterchurn is set by the UMD bundle before this module runs.
 let butterchurn = window.butterchurn;
-if (!butterchurn) {
-  try {
-    presetLine.textContent = 'Fetching Butterchurn from CDN…';
-    butterchurn = (await import('https://esm.sh/butterchurn@2.6.7')).default;
-  } catch(err) {
-    presetLine.textContent = 'Load failed — run: curl .../butterchurn.min.js into Resources/';
-    try { window.webkit.messageHandlers.log.postMessage('[JS] butterchurn load FAIL: ' + err); } catch(_) {}
-    throw err;
-  }
+// UMD builds sometimes expose the module namespace; unwrap the default export if needed.
+if (butterchurn && !butterchurn.createVisualizer && butterchurn.default) {
+  butterchurn = butterchurn.default;
+}
+if (!butterchurn || !butterchurn.createVisualizer) {
+  presetLine.textContent = 'butterchurn not loaded — check Swift console for fetch errors';
+  log('ERROR: window.butterchurn missing or incomplete: ' + JSON.stringify(butterchurn && Object.keys(butterchurn)));
+  throw new Error('butterchurn unavailable');
 }
 
 let hudVisible = true, hudTimer = null;
@@ -304,8 +304,6 @@ document.addEventListener('keydown', e => {
     case 'b': case 'B': e.preventDefault(); window._keyCommand('cut'); break;
     case ' ': e.preventDefault(); window._keyCommand('pause'); break;
     case 'h': case 'H': window._keyCommand('hud'); break;
-  }
-});
   }
 });
 

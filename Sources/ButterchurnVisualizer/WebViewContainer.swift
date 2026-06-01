@@ -54,26 +54,62 @@ struct WebViewContainer: NSViewRepresentable {
     }
 
     private func loadHost(into webView: WKWebView) {
-        // Inject bundled butterchurn.min.js before the page loads so the module
-        // can use window.butterchurn without a CDN fetch.
-        if let bcURL    = Bundle.module.url(forResource: "butterchurn.min", withExtension: "js"),
-           let bcScript = try? String(contentsOf: bcURL, encoding: .utf8) {
-            let userScript = WKUserScript(source: bcScript,
-                                          injectionTime: .atDocumentStart,
-                                          forMainFrameOnly: true)
-            webView.configuration.userContentController.addUserScript(userScript)
-            print("[WebViewContainer] butterchurn.min.js injected from bundle")
-        } else {
-            print("[WebViewContainer] butterchurn.min.js not found — will try CDN")
-        }
-
-        guard let url  = Bundle.module.url(forResource: "butterchurn_host",
-                                           withExtension: "html"),
-              let html = try? String(contentsOf: url, encoding: .utf8)
+        guard let htmlURL = Bundle.module.url(forResource: "butterchurn_host",
+                                              withExtension: "html"),
+              let html = try? String(contentsOf: htmlURL, encoding: .utf8)
         else {
             print("[WebViewContainer] butterchurn_host.html not found in bundle")
             return
         }
+
+        // 1. Bundled copy (fastest — no network needed)
+        if let bcURL    = Bundle.module.url(forResource: "butterchurn.min", withExtension: "js"),
+           let bcScript = try? String(contentsOf: bcURL, encoding: .utf8),
+           bcScript.count > 100_000 {
+            print("[WebViewContainer] butterchurn.min.js loaded from bundle (\(bcScript.count) bytes)")
+            injectAndLoad(bcScript, html: html, into: webView)
+            return
+        }
+
+        // 2. Cached copy from a previous successful fetch
+        let cacheURL = Self.butterchurnCacheURL
+        if let cached = try? String(contentsOf: cacheURL, encoding: .utf8),
+           cached.count > 100_000 {
+            print("[WebViewContainer] butterchurn.min.js loaded from cache (\(cached.count) bytes)")
+            injectAndLoad(cached, html: html, into: webView)
+            return
+        }
+
+        // 3. Fetch via URLSession — the Swift app process has full outbound network
+        //    access; the WKWebView content process is sandboxed and cannot reach CDNs
+        //    on macOS 15/26.
+        print("[WebViewContainer] Fetching butterchurn.min.js via URLSession…")
+        let cdnURL = URL(string: "https://cdn.jsdelivr.net/npm/butterchurn@2.6.7/build/butterchurn.min.js")!
+        URLSession.shared.dataTask(with: cdnURL) { data, _, error in
+            guard let data, error == nil, data.count > 100_000,
+                  let script = String(data: data, encoding: .utf8) else {
+                print("[WebViewContainer] CDN fetch failed: \(error?.localizedDescription ?? "bad/empty response")")
+                DispatchQueue.main.async {
+                    webView.loadHTMLString(html, baseURL: URL(string: "https://milkdrop.local"))
+                }
+                return
+            }
+            try? data.write(to: cacheURL)
+            print("[WebViewContainer] butterchurn.min.js fetched (\(data.count) bytes) and cached")
+            DispatchQueue.main.async { self.injectAndLoad(script, html: html, into: webView) }
+        }.resume()
+    }
+
+    private static var butterchurnCacheURL: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("butterchurn.min.js")
+    }
+
+    private func injectAndLoad(_ script: String, html: String, into webView: WKWebView) {
+        let userScript = WKUserScript(source: script,
+                                      injectionTime: .atDocumentStart,
+                                      forMainFrameOnly: true)
+        webView.configuration.userContentController.addUserScript(userScript)
         webView.loadHTMLString(html, baseURL: URL(string: "https://milkdrop.local"))
     }
 
