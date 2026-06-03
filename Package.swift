@@ -38,6 +38,7 @@ let package = Package(
                 // List resources explicitly so SPM never touches the legacy
                 // Presets _ Butterchurn / Presets1 folders (filenames with $$
                 // in them break SPM's resource processor).
+                .process("Resources/butterchurn.min.js"),
                 .process("Resources/butterchurn_host.html"),
                 .process("Resources/microtonal_warp.milk"),
                 .process("Resources/presets"),
