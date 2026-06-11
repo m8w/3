@@ -33,6 +33,7 @@ let package = Package(
             path: "Sources/ButterchurnVisualizer",
             exclude: [
                 "Milkdrop.metal",
+                "Resources/presets_review",
             ],
             resources: [
                 // List resources explicitly so SPM never touches the legacy
