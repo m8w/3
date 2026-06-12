@@ -40,7 +40,9 @@ let package = Package(
                 // Presets _ Butterchurn / Presets1 folders (filenames with $$
                 // in them break SPM's resource processor).
                 .process("Resources/butterchurn.min.js"),
+                .process("Resources/milkdrop-preset-converter.min.js"),
                 .process("Resources/butterchurn_host.html"),
+                .process("Resources/curate_host.html"),
                 .process("Resources/microtonal_warp.milk"),
                 .process("Resources/presets"),
             ]
