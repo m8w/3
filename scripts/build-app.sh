@@ -19,7 +19,9 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="ButterchurnVisualizer"
 BUNDLE_ID="com.butterchurn.visualizer"
-CONFIG="release"
+# Debug by default — the release optimizer can crash swift-frontend on this
+# project, and debug runs fine (it's what Xcode uses). Override: CONFIG=release.
+CONFIG="${CONFIG:-debug}"
 BUILD_DIR=".build/${CONFIG}"
 APP="${APP_NAME}.app"
 IDENTITY="${CODESIGN_IDENTITY:--}"     # default: ad-hoc (-)
