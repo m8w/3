@@ -46,13 +46,42 @@ Video is captured from the visualizer window (just the mix); audio is the
 display's system audio (whatever music is playing). Encoding is H.264 1080p30 /
 AAC via HaishinKit.
 
-### Important on-Mac notes
+### ⚠️ Screen Recording permission — run as a built `.app`, not via Xcode
 
-- **Screen Recording permission** is required. macOS prompts on first Go Live.
-  ScreenCaptureKit ties this permission to an app bundle, so for a reliable
-  experience **run from Xcode** (Open `Package.swift`, ⌘R) or a built `.app`,
-  rather than a bare `swift run` binary — a raw SwiftPM binary may not retain the
-  permission.
+Broadcasting captures the visualizer window, which needs **Screen Recording**
+permission. This permission **does not work when the app is run through the
+Xcode debugger or `swift run`** — the debugger becomes the "responsible process"
+and a bare SwiftPM binary has no stable identity, so the grant never sticks
+(you'll see macOS re-prompt every time and `Go Live` fails with a permission
+error even though the toggle looks ON).
+
+**Fix — build and run a real app bundle:**
+
+```bash
+cd ~/music/3
+./scripts/build-app.sh        # produces ButterchurnVisualizer.app
+open ButterchurnVisualizer.app  # launch it THIS way, not through Xcode
+```
+
+First launch prompts for **Screen Recording** and **Microphone** — grant both
+(Screen Recording may need you to quit & reopen once). After that, **Go Live**
+works.
+
+- Ad-hoc signing (the default) means you re-grant Screen Recording after each
+  rebuild. To make it **permanent**, sign with your Apple Development identity:
+  ```bash
+  security find-identity -v -p codesigning      # copy your "Apple Development: …" line
+  CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)" ./scripts/build-app.sh
+  ```
+- You can still use Xcode for editing/iterating — just do the actual
+  *broadcasting* from the built `.app`.
+
+### Other notes
+
+- **HaishinKit version**: pinned to the 1.x line in `Package.swift`. Its
+  codec-settings API differs slightly between versions; if the build errors on
+  the `stream.videoSettings.*` lines in `Broadcaster.swift → configureEncoder()`,
+  comment that method body out (defaults still stream) and report the exact error.
 - **HaishinKit version**: pinned to the 1.x line in `Package.swift`. Its
   codec-settings API differs slightly between versions; if the build errors on
   the `stream.videoSettings.*` lines in `Broadcaster.swift → configureEncoder()`,
