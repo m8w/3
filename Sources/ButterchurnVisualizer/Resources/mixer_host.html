@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<!--
+  mixer_host.html — 3-source Butterchurn mixer with add/subtract compositing.
+
+  Three independent Butterchurn visualizers render to three offscreen canvases.
+  A WebGL2 compositor blends them:  out = clamp( Σ signᵢ · weightᵢ · screenᵢ ).
+  Each screen has an independent sign (+ add / − subtract) and weight. Weights
+  are audio-reactive (bass→1, mid→2, treb→3) and can be nudged live by key.
+
+  Swift bridge (unchanged from the single-screen host):
+    window._addPresets(obj)   — PresetLoader feeds the shared preset pool
+    window._updateQ([32])     — AudioEngine feeds 32 microtonal bins
+    window._keyCommand(cmd)    — WebViewContainer forwards key commands
+
+  Keys:  1/2/3 select screen · n/p next/prev on selected · b cut · s toggle sign
+         [ / ] weight −/+ · m auto-mix · 0 reset mix · space pause · h hud
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100vw; height:100vh; background:#000; overflow:hidden; }
+  /* Source canvases render offscreen — never shown directly. */
+  .src { position:absolute; left:-10000px; top:0; }
+  #out { display:block; width:100vw; height:100vh; }
+
+  #hud {
+    position:fixed; top:0; left:0; right:0; padding:12px 16px;
+    display:flex; gap:14px; align-items:flex-start; pointer-events:none; z-index:9999;
+    background:linear-gradient(rgba(0,0,0,0.6), transparent);
+    font:12px/1.45 'SF Mono','Menlo',monospace; color:#fff; text-shadow:0 1px 4px #000;
+  }
+  #hud.hidden { display:none; }
+  .scr { flex:1; padding:6px 9px; border-radius:6px; background:rgba(255,255,255,0.06);
+         border:1px solid rgba(255,255,255,0.10); }
+  .scr.sel { border-color:rgba(120,200,255,0.9); background:rgba(120,200,255,0.12); }
+  .scr .top { display:flex; justify-content:space-between; font-weight:700; margin-bottom:2px; }
+  .scr .nm  { color:rgba(255,255,255,0.78); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sign-add { color:#7CFFA0; } .sign-sub { color:#FF8C8C; }
+  .wbar { height:4px; margin-top:4px; background:rgba(255,255,255,0.15); border-radius:2px; overflow:hidden; }
+  .wfill { height:100%; width:0%; background:#fff; }
+  #ginfo { position:fixed; bottom:10px; left:16px; font:11px/1.4 'SF Mono',monospace;
+           color:rgba(255,255,255,0.55); text-shadow:0 1px 4px #000; pointer-events:none; z-index:9999; }
+</style>
+</head>
+<body>
+<canvas id="s0" class="src"></canvas>
+<canvas id="s1" class="src"></canvas>
+<canvas id="s2" class="src"></canvas>
+<canvas id="out"></canvas>
+
+<div id="hud">
+  <div class="scr" id="hud0"><div class="top"><span>1</span><span class="sgn">+</span></div><div class="nm">…</div><div class="wbar"><div class="wfill"></div></div></div>
+  <div class="scr" id="hud1"><div class="top"><span>2</span><span class="sgn">+</span></div><div class="nm">…</div><div class="wbar"><div class="wfill"></div></div></div>
+  <div class="scr" id="hud2"><div class="top"><span>3</span><span class="sgn">+</span></div><div class="nm">…</div><div class="wbar"><div class="wfill"></div></div></div>
+</div>
+<div id="ginfo">3-source mixer · auto-mix ON · keys: 1/2/3 select · s sign · [ ] weight · m auto · n/p preset · h hud</div>
+
+<!-- Preset queue shim (PresetLoader may inject before the module runs) -->
+<script>
+window._presetQueue = [];
+window._addPresets  = function(p){ window._presetQueue.push(p); };
+</script>
+
+<script type="module">
+const $ = id => document.getElementById(id);
+function log(m){ try{ window.webkit.messageHandlers.log.postMessage('[JS] '+m); }catch(_){} }
+
+let butterchurn = window.butterchurn;
+if (butterchurn && !butterchurn.createVisualizer && butterchurn.default) butterchurn = butterchurn.default;
+if (!butterchurn || !butterchurn.createVisualizer) {
+  $('ginfo').textContent = 'butterchurn not loaded — check Swift console';
+  log('ERROR: window.butterchurn missing: ' + JSON.stringify(butterchurn && Object.keys(butterchurn)));
+  throw new Error('butterchurn unavailable');
+}
+
+// ── render sizes ──────────────────────────────────────────────────────────────
+const SRC_W = 960, SRC_H = 540;        // per-screen butterchurn resolution
+const OUT_W = 1920, OUT_H = 1080;      // composite / broadcast resolution
+
+// ── microtonal EEL injection (same approach as the single-screen host) ────────
+const PF_INIT =
+  'low=0;mlo=0;mhi=0;high=0;centroid=0.5;flux_lo=0;flux_hi=0;flux_mid=0;' +
+  'low_att=0;high_att=0;mid_att=0;spin_acc=0;dq_lo=0;dq_hi=0;dq_mid=0;dq_air=0;';
+const PER_FRAME =
+  'low=(q1+q2+q3+q4+q5+q6+q7+q8)*0.125;mlo=(q9+q10+q11+q12+q13+q14+q15+q16)*0.125;' +
+  'mhi=(q17+q18+q19+q20+q21+q22+q23+q24)*0.125;high=(q25+q26+q27+q28+q29+q30+q31+q32)*0.125;' +
+  'low_att=low_att*0.75+low*0.25;mid_att=mid_att*0.78+mlo*0.22+mhi*0.10;high_att=high_att*0.65+high*0.35;' +
+  '_denom=low+mlo+mhi+high+0.001;centroid=(low*0.125+mlo*0.375+mhi*0.625+high*0.875)/_denom;' +
+  'flux_lo=abs(q1-q2)+abs(q3-q4)+abs(q5-q6)+abs(q7-q8);flux_hi=abs(q25-q26)+abs(q27-q28)+abs(q29-q30)+abs(q31-q32);' +
+  'flux_mid=abs(q12-q13)+abs(q14-q15)+abs(q20-q21)+abs(q22-q23);dq_lo=q8-q9;dq_mid=q16-q17;dq_hi=q20-q21;dq_air=q28-q29;' +
+  'spin_acc=spin_acc*0.92+dq_lo*0.08;decay=0.965-low_att*0.018;zoom=1.012+low_att*0.055-high_att*0.025;' +
+  'rot=0.005+spin_acc*0.4+centroid*0.015*sin(time*0.7);warp=1.00+q1*0.20+q32*0.15+flux_hi*1.20;' +
+  'dx=dq_lo*0.012+dq_air*0.005*sin(time*1.1);dy=dq_hi*0.012+dq_mid*0.005*cos(time*0.9);' +
+  'wave_r=0.4+bass*0.6;wave_g=0.3+mid*0.7;wave_b=0.5+treb*0.5;wave_x=0.5+dq_lo*0.15;wave_y=0.5+dq_hi*0.15;' +
+  'wave_scale=0.7+high_att*1.3;wave_a=0.5+mid_att*0.5;';
+const PER_PIXEL =
+  'warp=warp+q1*0.10*sin(rad*2.5+time*0.4);warp=warp+(q16+q17)*0.06*cos(ang*3.0+time*0.9);' +
+  'warp=warp+q32*0.08*sin(x*14.0+y*14.0+time*2.5)*rad*rad;zoom=zoom+low_att*rad*0.06;' +
+  'rot=rot+flux_hi*0.08*sin(rad*4.0);dx=dx+dq_lo*sin(ang)*0.010+q1*sin(rad*2.0+time*0.3)*0.020;' +
+  'dy=dy+dq_hi*cos(ang)*0.010+q2*cos(rad*2.0+time*0.3)*0.020;dx=dx+(q8-q9)*0.010;dy=dy+(q20-q21)*0.010;' +
+  'dx=dx+q32*sin(x*18.0+time*3.2)*0.006;dy=dy+q31*cos(y*18.0+time*3.2)*0.006;';
+
+function patchPreset(base) {
+  if (typeof base.warp === 'string' && base.warp.includes('shader_body')) return base;
+  const pfEEL = base.per_frame_eqs_eel || base.perFrameEQs || '';
+  const ppEEL = base.per_pixel_eqs_eel || base.perPixelEQs || '';
+  if (pfEEL.trim()) {
+    const pfKey   = 'perFrameEQs' in base ? 'perFrameEQs' : 'per_frame_eqs_eel';
+    const ppKey   = 'perPixelEQs' in base ? 'perPixelEQs' : 'per_pixel_eqs_eel';
+    const initKey = 'initEQs'     in base ? 'initEQs'     : 'init_eqs_eel';
+    return { ...base, [initKey]:(base[initKey]||'')+PF_INIT, [pfKey]:pfEEL+PER_FRAME, [ppKey]:ppEEL+PER_PIXEL };
+  }
+  const { init_eqs_str, frame_eqs_str, pixel_eqs_str, ...rest } = base;
+  return { ...rest, per_frame_eqs_eel: PER_FRAME, per_pixel_eqs_eel: PER_PIXEL };
+}
+
+// ── audio: shared 32-bin → 1024-bin frequency + waveform buffers ──────────────
+const FBINS = 1024;
+const freqData = new Uint8Array(FBINS);
+const timeData = new Uint8Array(FBINS); timeData.fill(128);
+const lastQ = new Float32Array(32);
+let bass = 0, mid = 0, treb = 0;       // smoothed band energies (0..~1)
+
+function updateAudio(q) {
+  for (let i = 0; i < 32; i++) lastQ[i] = q[i];
+  for (let b = 0; b < FBINS; b++) {
+    const frac = (b / FBINS) * 31, lo = frac | 0, hi = Math.min(lo + 1, 31), t = frac - lo;
+    freqData[b] = ((q[lo] * (1 - t) + q[hi] * t) * 220) | 0;
+  }
+  let lo = 0, md = 0, hi = 0;
+  for (let i = 0;  i < 8;  i++) lo += q[i];
+  for (let i = 8;  i < 24; i++) md += q[i];
+  for (let i = 24; i < 32; i++) hi += q[i];
+  bass = bass * 0.8 + (lo / 8)  * 0.2;
+  mid  = mid  * 0.8 + (md / 16) * 0.2;
+  treb = treb * 0.8 + (hi / 8)  * 0.2;
+}
+
+// ── three independent visualizers ─────────────────────────────────────────────
+const audioCtx = new AudioContext();
+const srcCanvas = [$('s0'), $('s1'), $('s2')];
+const viz = srcCanvas.map(c => { c.width = SRC_W; c.height = SRC_H;
+  return butterchurn.createVisualizer(audioCtx, c, { width: SRC_W, height: SRC_H, pixelRatio: 1 }); });
+
+const allPresets = {};
+const names = [];
+const screen = [
+  { idx:-1, sign:+1, weight:0.85, band:'bass' },
+  { idx:-1, sign:+1, weight:0.70, band:'mid'  },
+  { idx:-1, sign:+1, weight:0.70, band:'treb' },
+];
+let selected = 0, autoMix = true, paused = false, hudVisible = true;
+
+function loadOn(s, blend) {
+  if (!names.length) return false;
+  const n = names.length;
+  const start = screen[s].idx < 0 ? ((Math.random()*n)|0) : (screen[s].idx + 1) % n;
+  for (let i = 0; i < n; i++) {
+    const idx = (start + i) % n;
+    try { viz[s].loadPreset(patchPreset(allPresets[names[idx]]), blend); screen[s].idx = idx; return true; }
+    catch(e) { /* try next */ }
+  }
+  return false;
+}
+function stepOn(s, dir, blend) {
+  if (!names.length) return;
+  const n = names.length;
+  let start = screen[s].idx < 0 ? 0 : (screen[s].idx + dir + n) % n;
+  for (let i = 0; i < n; i++) {
+    const idx = (start + dir*i + n*1000) % n;
+    try { viz[s].loadPreset(patchPreset(allPresets[names[idx]]), blend); screen[s].idx = idx; refreshHUD(); return; }
+    catch(e) {}
+  }
+}
+
+// Independent staggered auto-cycling so the mix keeps evolving.
+const CYCLE_MS = [27000, 33000, 39000];
+const cycleTimers = [];
+function startCycles() {
+  cycleTimers.forEach(clearInterval); cycleTimers.length = 0;
+  for (let s = 0; s < 3; s++) cycleTimers.push(setInterval(() => { if (!paused) { loadOn(s, 2.7); refreshHUD(); } }, CYCLE_MS[s]));
+}
+
+// ── WebGL2 compositor ─────────────────────────────────────────────────────────
+const out = $('out'); out.width = OUT_W; out.height = OUT_H;
+const gl = out.getContext('webgl2', { alpha:false, antialias:false, preserveDrawingBuffer:false });
+
+const VS = `#version 300 es
+in vec2 p; out vec2 uv;
+void main(){ uv = p*0.5+0.5; gl_Position = vec4(p,0.0,1.0); }`;
+const FS = `#version 300 es
+precision highp float;
+in vec2 uv; out vec4 o;
+uniform sampler2D t0, t1, t2;
+uniform vec3 sw;            // signed weights (signᵢ·weightᵢ)
+void main(){
+  vec3 c = texture(t0, uv).rgb * sw.x
+         + texture(t1, uv).rgb * sw.y
+         + texture(t2, uv).rgb * sw.z;
+  o = vec4(clamp(c, 0.0, 1.0), 1.0);
+}`;
+function compile(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+
+const quad = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+const pLoc = gl.getAttribLocation(prog, 'p');
+gl.enableVertexAttribArray(pLoc);
+gl.vertexAttribPointer(pLoc, 2, gl.FLOAT, false, 0, 0);
+
+gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);   // canvas top-left → GL bottom-left
+const tex = [0,1,2].map(i => {
+  const t = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+});
+gl.uniform1i(gl.getUniformLocation(prog, 't0'), 0);
+gl.uniform1i(gl.getUniformLocation(prog, 't1'), 1);
+gl.uniform1i(gl.getUniformLocation(prog, 't2'), 2);
+const swLoc = gl.getUniformLocation(prog, 'sw');
+gl.viewport(0, 0, OUT_W, OUT_H);
+
+function bandEnergy(b){ return b === 'bass' ? bass : b === 'mid' ? mid : treb; }
+function effectiveWeight(s){
+  const base = screen[s].weight;
+  if (!autoMix) return base;
+  // Modulate the manual base around the screen's audio band.
+  const e = Math.min(1.2, bandEnergy(screen[s].band) * 1.6);
+  return Math.max(0, Math.min(1.6, base * (0.45 + 0.95 * e)));
+}
+
+// ── render loop: render all three, upload, composite — all in one rAF turn ────
+function composeOnce(){
+  for (let s = 0; s < 3; s++) viz[s].render({ frequencyData: freqData, timeByteData: timeData });
+  for (let s = 0; s < 3; s++) {
+    gl.activeTexture(gl.TEXTURE0 + s);
+    gl.bindTexture(gl.TEXTURE_2D, tex[s]);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas[s]);
+  }
+  gl.uniform3f(swLoc,
+    screen[0].sign * effectiveWeight(0),
+    screen[1].sign * effectiveWeight(1),
+    screen[2].sign * effectiveWeight(2));
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+function frame(){
+  requestAnimationFrame(frame);
+  if (paused) return;
+  composeOnce();
+  if (hudVisible) tickHUD();
+}
+
+// Validation/debug hook: synchronously compose one frame and read it back.
+window.__readComposite = function(){
+  composeOnce();
+  const px = new Uint8Array(OUT_W * OUT_H * 4);
+  gl.readPixels(0, 0, OUT_W, OUT_H, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  let sum = 0, nz = 0; const step = 64;        // sample every 16th pixel (×4)
+  for (let i = 0; i < px.length; i += step) { const v = px[i]+px[i+1]+px[i+2]; sum += v; if (v > 12) nz++; }
+  const n = px.length / step;
+  return { meanRGBsum: +(sum/n).toFixed(1), nonBlackFrac: +(nz/n).toFixed(3) };
+};
+
+// ── HUD ───────────────────────────────────────────────────────────────────────
+const hudEls = [0,1,2].map(s => {
+  const el = $('hud'+s);
+  return { box: el, sgn: el.querySelector('.sgn'), nm: el.querySelector('.nm'), w: el.querySelector('.wfill') };
+});
+function refreshHUD(){
+  for (let s = 0; s < 3; s++){
+    const h = hudEls[s];
+    h.box.classList.toggle('sel', s === selected);
+    h.sgn.textContent = screen[s].sign > 0 ? '+' : '−';
+    h.sgn.className = 'sgn ' + (screen[s].sign > 0 ? 'sign-add' : 'sign-sub');
+    h.nm.textContent = screen[s].idx >= 0 ? names[screen[s].idx] : '…';
+  }
+  $('ginfo').textContent = `3-source mixer · auto-mix ${autoMix?'ON':'OFF'} · screen ${selected+1} selected · s sign · [ ] weight · m auto · n/p preset · h hud`;
+}
+function tickHUD(){ for (let s=0;s<3;s++) hudEls[s].w.style.width = Math.min(100, effectiveWeight(s)/1.6*100).toFixed(0)+'%'; }
+
+// ── Swift bridges ─────────────────────────────────────────────────────────────
+window._updateQ = q => updateAudio(q);
+
+window._addPresets = function(incoming){
+  const newNames = Object.keys(incoming);
+  if (!newNames.length) return;
+  const wasEmpty = names.length === 0;
+  Object.assign(allPresets, incoming);
+  names.push(...newNames);
+  log('presets total: ' + names.length);
+  if (wasEmpty) { for (let s = 0; s < 3; s++) loadOn(s, 0); startCycles(); refreshHUD(); }
+};
+(window._presetQueue || []).forEach(p => window._addPresets(p));
+window._presetQueue = null;
+
+function resetMix(){
+  screen[0].sign = screen[1].sign = screen[2].sign = +1;
+  screen[0].weight = 0.85; screen[1].weight = 0.70; screen[2].weight = 0.70;
+  autoMix = true; refreshHUD();
+}
+
+window._keyCommand = function(cmd){
+  switch(cmd){
+    case '1': case '2': case '3': selected = (+cmd) - 1; refreshHUD(); break;
+    case 'next': stepOn(selected, +1, 2.7); break;
+    case 'prev': stepOn(selected, -1, 2.7); break;
+    case 'cut':  stepOn(selected, +1, 0);   break;
+    case 'sign': screen[selected].sign *= -1; refreshHUD(); break;
+    case 'wdn':  screen[selected].weight = Math.max(0, screen[selected].weight - 0.1); refreshHUD(); break;
+    case 'wup':  screen[selected].weight = Math.min(1.6, screen[selected].weight + 0.1); refreshHUD(); break;
+    case 'auto': autoMix = !autoMix; refreshHUD(); break;
+    case 'reset':resetMix(); break;
+    case 'pause':paused = !paused; break;
+    case 'hud':  hudVisible = !hudVisible; $('hud').classList.toggle('hidden', !hudVisible);
+                 $('ginfo').style.display = hudVisible ? '' : 'none'; break;
+  }
+};
+
+// Local keyboard fallback (when the WebView itself has focus).
+document.addEventListener('keydown', e => {
+  const map = { '1':'1','2':'2','3':'3','n':'next','p':'prev','b':'cut','s':'sign',
+                '[':'wdn',']':'wup','m':'auto','0':'reset',' ':'pause','h':'hud',
+                'ArrowRight':'next','ArrowLeft':'prev' };
+  const c = map[e.key]; if (c){ e.preventDefault(); window._keyCommand(c); }
+});
+
+window._viz = viz;
+refreshHUD();
+requestAnimationFrame(frame);   // start the render loop after everything is defined
+log('mixer module ready');
+</script>
+</body>
+</html>

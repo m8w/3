@@ -42,6 +42,7 @@ let package = Package(
                 .process("Resources/butterchurn.min.js"),
                 .process("Resources/milkdrop-preset-converter.min.js"),
                 .process("Resources/butterchurn_host.html"),
+                .process("Resources/mixer_host.html"),
                 .process("Resources/curate_host.html"),
                 .process("Resources/microtonal_warp.milk"),
                 .process("Resources/presets"),

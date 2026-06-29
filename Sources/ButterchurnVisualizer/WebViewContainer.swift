@@ -54,11 +54,15 @@ struct WebViewContainer: NSViewRepresentable {
     }
 
     private func loadHost(into webView: WKWebView) {
-        guard let htmlURL = Bundle.module.url(forResource: "butterchurn_host",
+        // The 3-source mixer is the default visual experience. To fall back to
+        // the single-screen host, set SINGLE_SCREEN=1 in the environment.
+        let hostName = ProcessInfo.processInfo.environment["SINGLE_SCREEN"] == "1"
+            ? "butterchurn_host" : "mixer_host"
+        guard let htmlURL = Bundle.module.url(forResource: hostName,
                                               withExtension: "html"),
               let html = try? String(contentsOf: htmlURL, encoding: .utf8)
         else {
-            print("[WebViewContainer] butterchurn_host.html not found in bundle")
+            print("[WebViewContainer] \(hostName).html not found in bundle")
             return
         }
 
@@ -143,6 +147,15 @@ struct WebViewContainer: NSViewRepresentable {
                 case "b":  cmd = "cut"
                 case " ":  cmd = "pause"
                 case "h":  cmd = "hud"
+                // ── 3-source mixer controls ──────────────────────────────────
+                case "1":  cmd = "1"      // select screen 1
+                case "2":  cmd = "2"      // select screen 2
+                case "3":  cmd = "3"      // select screen 3
+                case "s":  cmd = "sign"   // toggle add / subtract on selected
+                case "[":  cmd = "wdn"    // selected weight −
+                case "]":  cmd = "wup"    // selected weight +
+                case "m":  cmd = "auto"   // toggle audio-reactive auto-mix
+                case "0":  cmd = "reset"  // reset mix to defaults
                 default:   return
                 }
             }
