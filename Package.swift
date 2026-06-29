@@ -27,9 +27,18 @@ let package = Package(
     platforms: [
         .macOS(.v13)   // Ventura — native on M2 Mac Mini
     ],
+    dependencies: [
+        // RTMP broadcast (H.264/AAC → YouTube/Restream). Pinned to the 1.x line;
+        // the 2.x rewrite changes the API used in Broadcaster.swift.
+        .package(url: "https://github.com/shogo4405/HaishinKit.swift.git",
+                 .upToNextMajor(from: "1.6.0")),
+    ],
     targets: [
         .executableTarget(
             name: "ButterchurnVisualizer",
+            dependencies: [
+                .product(name: "HaishinKit", package: "HaishinKit.swift"),
+            ],
             path: "Sources/ButterchurnVisualizer",
             exclude: [
                 "Milkdrop.metal",
