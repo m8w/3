@@ -87,9 +87,10 @@
   <div class="master">
     <button class="mx" id="autoBtn" data-act="auto">AUTO-MIX: ON</button>
     <button class="mx" data-act="reset">RESET MIX</button>
+    <button class="mx" data-act="hide">GRAPHICS ONLY ⤢</button>
   </div>
 </div>
-<div id="ginfo">Click a screen's ＋/− to add or subtract it · drag the slider for weight · ◀ ▶ change preset · keys still work (1/2/3 · s · [ ] · m · h hide)</div>
+<div id="ginfo">Click ＋/− to add or subtract a screen · slider = weight · ◀ ▶ change preset · GRAPHICS ONLY hides this bar (press H to bring it back) · F = fullscreen</div>
 
 <!-- Preset queue shim (PresetLoader may inject before the module runs) -->
 <script>
@@ -335,12 +336,13 @@ function tickHUD(){
     panels[s].mfill.style.width = Math.min(100, effectiveWeight(s) / 1.6 * 100).toFixed(0) + '%';
 }
 
-// Auto-fade the bar when idle so it stays out of the broadcast; any mouse move
-// or control action brings it back.
-let idleTimer = null;
-function showBar(){ bar.classList.remove('idle'); clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => { if (hudVisible) bar.classList.add('idle'); }, 3500); }
-document.addEventListener('mousemove', showBar);
+// Clean toggle: HUD pinned-and-showing, or graphics only. No auto-fade.
+function setHud(on){
+  hudVisible = on;
+  bar.classList.toggle('hidden', !on);
+  $('ginfo').style.display = on ? '' : 'none';
+}
+function showBar(){ /* HUD stays pinned while visible — nothing to reveal */ }
 
 // Click handling (event delegation) — works regardless of the Swift key path.
 bar.addEventListener('click', e => {
@@ -356,6 +358,7 @@ bar.addEventListener('click', e => {
     case 'next':  stepOn(s, +1, 2.7); break;
     case 'auto':  autoMix = !autoMix; refreshHUD(); break;
     case 'reset': resetMix(); break;
+    case 'hide':  setHud(false); break;   // → graphics only (H brings it back)
   }
 });
 bar.addEventListener('input', e => {
@@ -399,10 +402,8 @@ window._keyCommand = function(cmd){
     case 'auto': autoMix = !autoMix; refreshHUD(); break;
     case 'reset':resetMix(); break;
     case 'pause':paused = !paused; break;
-    case 'hud':  hudVisible = !hudVisible; bar.classList.toggle('hidden', !hudVisible);
-                 $('ginfo').style.display = hudVisible ? '' : 'none'; return;
+    case 'hud':  setHud(!hudVisible); return;   // H = HUD ⇄ graphics-only
   }
-  showBar();   // surface the bar so the change is visible
 };
 
 // Local keyboard fallback (when the WebView itself has focus).
