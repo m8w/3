@@ -129,8 +129,11 @@ final class Broadcaster: NSObject, ObservableObject, SCStreamOutput, SCStreamDel
                 : "Screen Recording permission isn't active for this build. Run the app as a built .app (scripts/build-app.sh → open ButterchurnVisualizer.app), NOT through Xcode — the debugger blocks the grant. Then allow it in System Settings ▸ Privacy & Security ▸ Screen Recording."
             throw NSError(domain: "Broadcaster", code: 1, userInfo: [NSLocalizedDescriptionKey: hint])
         }
-        let display = content.displays.first { NSPointInRect(CGPoint(x: win.frame.midX, y: win.frame.midY), $0.frame) }
-                   ?? content.displays.first
+        guard let display = content.displays.first(where: { NSPointInRect(CGPoint(x: win.frame.midX, y: win.frame.midY), $0.frame) })
+                         ?? content.displays.first else {
+            throw NSError(domain: "Broadcaster", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "No display available to capture."])
+        }
 
         let videoCfg = SCStreamConfiguration()
         videoCfg.width = 1920
@@ -140,23 +143,25 @@ final class Broadcaster: NSObject, ObservableObject, SCStreamOutput, SCStreamDel
         videoCfg.queueDepth = 6
         videoCfg.showsCursor = false
 
-        let vStream = SCStream(filter: SCContentFilter(desktopIndependentWindow: win),
+        // Capture the whole display — what's actually on screen — which is the most
+        // reliable way to grab WebGL/GPU-composited content (window capture can come
+        // back black for it). Run the mixer fullscreen (press F) so the broadcast is
+        // just the mix.
+        let vStream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []),
                                configuration: videoCfg, delegate: self)
         try vStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
         videoStream = vStream
 
         // Audio: the display's system audio (the music).
-        if let display {
-            let audioCfg = SCStreamConfiguration()
-            audioCfg.capturesAudio = true
-            audioCfg.sampleRate = 48_000
-            audioCfg.channelCount = 2
-            audioCfg.width = 2; audioCfg.height = 2     // audio-only; video frames ignored
-            let aStream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []),
-                                   configuration: audioCfg, delegate: self)
-            try aStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
-            audioStream = aStream
-        }
+        let audioCfg = SCStreamConfiguration()
+        audioCfg.capturesAudio = true
+        audioCfg.sampleRate = 48_000
+        audioCfg.channelCount = 2
+        audioCfg.width = 2; audioCfg.height = 2     // audio-only; video frames ignored
+        let aStream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []),
+                               configuration: audioCfg, delegate: self)
+        try aStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
+        audioStream = aStream
 
         try await videoStream?.startCapture()
         try await audioStream?.startCapture()
