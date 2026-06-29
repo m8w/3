@@ -42,6 +42,8 @@ final class Broadcaster: NSObject, ObservableObject, SCStreamOutput, SCStreamDel
     private var videoStream: SCStream?
     private var audioStream: SCStream?
     private var streamKey = ""
+    private var videoFrameCount = 0
+    private var audioFrameCount = 0
 
     override init() {
         super.init()
@@ -166,6 +168,7 @@ final class Broadcaster: NSObject, ObservableObject, SCStreamOutput, SCStreamDel
 
         try await videoStream?.startCapture()
         try await audioStream?.startCapture()
+        print("[Broadcast] capture started — display \(Int(display.width))x\(Int(display.height)) → 1080p60, 16 Mbps")
     }
 
     private func stopCapture() async {
@@ -183,7 +186,16 @@ final class Broadcaster: NSObject, ObservableObject, SCStreamOutput, SCStreamDel
         // (No SCStreamFrameInfo attachment parsing — that cast is fragile and was
         // silently dropping every video frame.)
         if type == .screen, CMSampleBufferGetImageBuffer(sampleBuffer) == nil { return }
-        Task { @MainActor in self.stream.append(sampleBuffer) }
+        Task { @MainActor in
+            self.stream.append(sampleBuffer)
+            if type == .screen {
+                self.videoFrameCount += 1
+                if self.videoFrameCount % 120 == 1 { print("[Broadcast] video frames appended: \(self.videoFrameCount)") }
+            } else {
+                self.audioFrameCount += 1
+                if self.audioFrameCount % 200 == 1 { print("[Broadcast] audio frames appended: \(self.audioFrameCount)") }
+            }
+        }
     }
 
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
