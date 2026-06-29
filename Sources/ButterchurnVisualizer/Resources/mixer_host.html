@@ -414,6 +414,10 @@ document.addEventListener('keydown', e => {
   const c = map[e.key]; if (c){ e.preventDefault(); window._keyCommand(c); }
 });
 
+// Mouse fallback so you can always get out of graphics-only mode, even if the
+// keyboard path isn't reaching the page: double-click the visuals toggles the HUD.
+$('out').addEventListener('dblclick', () => setHud(!hudVisible));
+
 window._viz = viz;
 refreshHUD();
 requestAnimationFrame(frame);   // start the render loop after everything is defined
