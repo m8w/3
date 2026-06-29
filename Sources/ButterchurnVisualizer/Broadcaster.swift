@@ -82,8 +82,9 @@ final class Broadcaster: NSObject, ObservableObject, SCStreamOutput, SCStreamDel
 
     private func configureEncoder() {
         stream.videoSettings.videoSize = .init(width: 1920, height: 1080)
-        stream.videoSettings.bitRate   = 6_000_000
-        stream.audioSettings.bitRate   = 128_000
+        stream.videoSettings.bitRate   = 16_000_000   // 16 Mbps
+        stream.videoSettings.maxKeyFrameIntervalDuration = 2   // keyframe every 2s (RTMP needs this)
+        stream.audioSettings.bitRate   = 160_000
     }
 
     @objc private func onRTMPStatus(_ notification: Notification) {
@@ -138,7 +139,7 @@ final class Broadcaster: NSObject, ObservableObject, SCStreamOutput, SCStreamDel
         let videoCfg = SCStreamConfiguration()
         videoCfg.width = 1920
         videoCfg.height = 1080
-        videoCfg.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+        videoCfg.minimumFrameInterval = CMTime(value: 1, timescale: 60)   // 60 fps
         videoCfg.pixelFormat = kCVPixelFormatType_32BGRA
         videoCfg.queueDepth = 6
         videoCfg.showsCursor = false
