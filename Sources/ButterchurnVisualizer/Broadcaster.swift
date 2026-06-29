@@ -1,207 +1,142 @@
 import SwiftUI
-import ScreenCaptureKit
-import AVFoundation
-import CoreGraphics
-import HaishinKit
+import Foundation
 
-// MARK: - Broadcaster
+// MARK: - Broadcaster (FFmpeg backend)
 //
-// Live RTMP broadcast of the mixer to YouTube / Restream.
+// Live RTMP broadcast to YouTube / Restream. We shell out to ffmpeg, which
+// captures the screen + BlackHole audio via avfoundation, encodes H.264
+// (VideoToolbox) / AAC, and pushes RTMP. ffmpeg's RTMP video is rock-solid —
+// unlike HaishinKit, which accepted our video frames but never encoded them.
 //
-//   • Video — ScreenCaptureKit captures the visualizer window (just the mix,
-//     no operator UI), 1080p30.
-//   • Audio — ScreenCaptureKit captures the display's system audio (the music),
-//     so whatever is playing goes out with the visuals.
-//   • Encode + RTMP — HaishinKit encodes H.264 / AAC and publishes to the
-//     RTMP URL + stream key you enter in the menu-bar Broadcast panel.
+// ── REQUIREMENTS ──────────────────────────────────────────────────────────────
+//  • ffmpeg installed (you already have it — radiot.py uses ffplay):
+//        brew install ffmpeg
+//  • Run the app from Terminal so the Screen-Recording grant applies:
+//        ./ButterchurnVisualizer.app/Contents/MacOS/ButterchurnVisualizer
+//  • Fullscreen the mix (press F) so the captured display is just the visuals.
 //
-// ── ON-MAC NOTES ──────────────────────────────────────────────────────────────
-//  • Screen Recording permission: first Go Live triggers the macOS prompt.
-//    ScreenCaptureKit ties that permission to an app bundle, so run from Xcode
-//    (or a built/signed .app) rather than a bare `swift run` binary, otherwise
-//    the permission may not stick.
-//  • HaishinKit's settings API shifts between versions. The codec-settings block
-//    in `configureEncoder()` is the only version-sensitive spot — if it fails to
-//    compile, comment it out (defaults still stream) and report the error.
-//
-//  YouTube ingest URL:  rtmp://a.rtmp.youtube.com/live2
-//  (stream key from YouTube Studio → Go Live → Stream settings)
+//  Capture devices default to "Capture screen 0" + "BlackHole 2ch". Override via
+//  env CAPTURE_VIDEO_DEVICE / CAPTURE_AUDIO_DEVICE if your indices/names differ.
+//  If a name is wrong, ffmpeg prints the available device list to the console.
 // ─────────────────────────────────────────────────────────────────────────────
 
 @MainActor
-final class Broadcaster: NSObject, ObservableObject, SCStreamOutput, SCStreamDelegate {
+final class Broadcaster: ObservableObject {
 
     @Published var isLive = false
     @Published var status = "Idle"
 
-    // Title of the window we capture for video (the main visualizer window).
-    static let windowTitle = "Butterchurn — Microtonal Visualizer"
+    private var process: Process?
 
-    private let connection = RTMPConnection()
-    private lazy var stream = RTMPStream(connection: connection)
-    private var videoStream: SCStream?
-    private var audioStream: SCStream?
-    private var streamKey = ""
-    private var videoFrameCount = 0
-    private var audioFrameCount = 0
-
-    override init() {
-        super.init()
-        connection.addEventListener(.rtmpStatus, selector: #selector(onRTMPStatus), observer: self)
+    private var videoDevice: String {
+        ProcessInfo.processInfo.environment["CAPTURE_VIDEO_DEVICE"] ?? "Capture screen 0"
+    }
+    private var audioDevice: String {
+        ProcessInfo.processInfo.environment["CAPTURE_AUDIO_DEVICE"] ?? "BlackHole 2ch"
     }
 
-    // MARK: Public control
+    // MARK: Control
 
     func goLive(url: String, key: String) {
         guard !isLive else { return }
-        let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        streamKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedURL.isEmpty, !streamKey.isEmpty else { status = "Enter RTMP URL and stream key"; return }
+        let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !u.isEmpty, !k.isEmpty else { status = "Enter RTMP URL and stream key"; return }
+        guard let ffmpeg = Self.findFFmpeg() else {
+            status = "ffmpeg not found — run: brew install ffmpeg"; return
+        }
+        let target = u.hasSuffix("/") ? u + k : u + "/" + k
 
-        configureEncoder()
-        status = "Starting capture…"
-        Task {
-            do {
-                try await startCapture()
-                status = "Connecting…"
-                connection.connect(trimmedURL)
-            } catch {
-                status = "Capture failed: \(error.localizedDescription)"
-                await stopCapture()
+        let args = [
+            "-hide_banner",
+            "-f", "avfoundation",
+            "-capture_cursor", "0",
+            "-framerate", "60",
+            "-i", "\(videoDevice):\(audioDevice)",
+            "-c:v", "h264_videotoolbox",
+            "-realtime", "1",
+            "-b:v", "16M", "-maxrate", "16M", "-bufsize", "32M",
+            "-pix_fmt", "yuv420p",
+            "-g", "120",
+            "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
+            "-f", "flv", target,
+        ]
+        print("[Broadcast] ffmpeg \(args.joined(separator: " "))")
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: ffmpeg)
+        p.arguments = args
+
+        let errPipe = Pipe()
+        p.standardError = errPipe
+        p.standardOutput = errPipe
+        errPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let chunk = h.availableData
+            guard !chunk.isEmpty, let s = String(data: chunk, encoding: .utf8) else { return }
+            Task { @MainActor in self?.handleOutput(s) }
+        }
+        p.terminationHandler = { [weak self] proc in
+            Task { @MainActor in
+                self?.isLive = false
+                if self?.status == "● LIVE" || self?.status == "Connecting…" {
+                    self?.status = proc.terminationStatus == 0 ? "Stopped" : "ffmpeg exited (\(proc.terminationStatus))"
+                }
             }
+        }
+
+        do {
+            try p.run()
+            process = p
+            isLive = true
+            status = "Connecting…"
+        } catch {
+            status = "Failed to launch ffmpeg: \(error.localizedDescription)"
         }
     }
 
     func stop() {
-        Task { await stopCapture() }
-        stream.close()
-        connection.close()
+        if let p = process, p.isRunning {
+            // ffmpeg flushes cleanly on 'q'/SIGINT.
+            p.interrupt()
+        }
+        process = nil
         isLive = false
         status = "Idle"
     }
 
-    // MARK: HaishinKit encoder config (version-sensitive — see header note)
+    // MARK: ffmpeg output → status
 
-    private func configureEncoder() {
-        stream.videoSettings.videoSize = .init(width: 1920, height: 1080)
-        stream.videoSettings.bitRate   = 16_000_000   // 16 Mbps
-        stream.videoSettings.maxKeyFrameIntervalDuration = 2   // keyframe every 2s (RTMP needs this)
-        stream.audioSettings.bitRate   = 160_000
-    }
-
-    @objc private func onRTMPStatus(_ notification: Notification) {
-        let e = Event.from(notification)
-        guard let data = e.data as? ASObject, let code = data["code"] as? String else { return }
-        Task { @MainActor in
-            switch code {
-            case RTMPConnection.Code.connectSuccess.rawValue:
-                stream.publish(streamKey)
-                isLive = true
-                status = "● LIVE"
-            case RTMPConnection.Code.connectFailed.rawValue,
-                 RTMPConnection.Code.connectClosed.rawValue:
-                isLive = false
-                status = "Disconnected (\(code))"
-            default:
-                status = code
+    private func handleOutput(_ s: String) {
+        print("[ffmpeg] \(s)", terminator: "")
+        if s.contains("frame=") {
+            if status != "● LIVE" { status = "● LIVE" }
+        } else {
+            let lower = s.lowercased()
+            if lower.contains("error") || lower.contains("failed") ||
+               lower.contains("could not") || lower.contains("unable to") ||
+               lower.contains("connection refused") || lower.contains("no such") {
+                let line = s.split(whereSeparator: \.isNewline).last.map(String.init) ?? s
+                status = "⚠︎ " + String(line.prefix(90))
             }
         }
     }
 
-    // MARK: ScreenCaptureKit capture
+    // MARK: ffmpeg lookup
 
-    private func startCapture() async throws {
-        // NOTE: we deliberately do NOT hard-gate on CGPreflightScreenCaptureAccess()
-        // — it can return false negatives. Try the capture first; only if we can't
-        // see our own window do we diagnose the permission.
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-
-        // Find our visualizer window by our own process ID (a SwiftPM binary has no
-        // bundle id), preferring the titled window over the menu-bar panel.
-        let myPID = ProcessInfo.processInfo.processIdentifier
-        let mine = content.windows.filter { $0.owningApplication?.processID == myPID }
-        let byTitle = { (w: SCWindow) in (w.title ?? "").contains("Butterchurn") }
-        let win = mine.first(where: byTitle)
-            ?? mine.max(by: { ($0.frame.width * $0.frame.height) < ($1.frame.width * $1.frame.height) })
-            ?? content.windows.first(where: byTitle)
-        guard let win else {
-            let hasPerm = CGPreflightScreenCaptureAccess()
-            if !hasPerm { CGRequestScreenCaptureAccess() }
-            let hint = hasPerm
-                ? "Visualizer window not found — make sure its window is open and on screen (not minimized)."
-                : "Screen Recording permission isn't active for this build. Run the app as a built .app (scripts/build-app.sh → open ButterchurnVisualizer.app), NOT through Xcode — the debugger blocks the grant. Then allow it in System Settings ▸ Privacy & Security ▸ Screen Recording."
-            throw NSError(domain: "Broadcaster", code: 1, userInfo: [NSLocalizedDescriptionKey: hint])
-        }
-        guard let display = content.displays.first(where: { NSPointInRect(CGPoint(x: win.frame.midX, y: win.frame.midY), $0.frame) })
-                         ?? content.displays.first else {
-            throw NSError(domain: "Broadcaster", code: 3,
-                          userInfo: [NSLocalizedDescriptionKey: "No display available to capture."])
-        }
-
-        let videoCfg = SCStreamConfiguration()
-        videoCfg.width = 1920
-        videoCfg.height = 1080
-        videoCfg.minimumFrameInterval = CMTime(value: 1, timescale: 60)   // 60 fps
-        videoCfg.pixelFormat = kCVPixelFormatType_32BGRA
-        videoCfg.queueDepth = 6
-        videoCfg.showsCursor = false
-
-        // Capture the whole display — what's actually on screen — which is the most
-        // reliable way to grab WebGL/GPU-composited content (window capture can come
-        // back black for it). Run the mixer fullscreen (press F) so the broadcast is
-        // just the mix.
-        let vStream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []),
-                               configuration: videoCfg, delegate: self)
-        try vStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
-        videoStream = vStream
-
-        // Audio: the display's system audio (the music).
-        let audioCfg = SCStreamConfiguration()
-        audioCfg.capturesAudio = true
-        audioCfg.sampleRate = 48_000
-        audioCfg.channelCount = 2
-        audioCfg.width = 2; audioCfg.height = 2     // audio-only; video frames ignored
-        let aStream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []),
-                               configuration: audioCfg, delegate: self)
-        try aStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
-        audioStream = aStream
-
-        try await videoStream?.startCapture()
-        try await audioStream?.startCapture()
-        print("[Broadcast] capture started — display \(Int(display.width))x\(Int(display.height)) → 1080p60, 16 Mbps")
-    }
-
-    private func stopCapture() async {
-        try? await videoStream?.stopCapture()
-        try? await audioStream?.stopCapture()
-        videoStream = nil
-        audioStream = nil
-    }
-
-    // MARK: SCStreamOutput — forward sample buffers to the encoder
-
-    nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard sampleBuffer.isValid else { return }
-        // Video frames must carry a pixel buffer; audio passes straight through.
-        // (No SCStreamFrameInfo attachment parsing — that cast is fragile and was
-        // silently dropping every video frame.)
-        if type == .screen, CMSampleBufferGetImageBuffer(sampleBuffer) == nil { return }
-        Task { @MainActor in
-            self.stream.append(sampleBuffer)
-            if type == .screen {
-                self.videoFrameCount += 1
-                if self.videoFrameCount % 120 == 1 { print("[Broadcast] video frames appended: \(self.videoFrameCount)") }
-            } else {
-                self.audioFrameCount += 1
-                if self.audioFrameCount % 200 == 1 { print("[Broadcast] audio frames appended: \(self.audioFrameCount)") }
-            }
-        }
-    }
-
-    nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
-        Task { @MainActor in
-            self.status = "Capture stopped: \(error.localizedDescription)"
-            self.isLive = false
-        }
+    private static func findFFmpeg() -> String? {
+        let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg", "/opt/local/bin/ffmpeg"]
+        for c in candidates where FileManager.default.isExecutableFile(atPath: c) { return c }
+        // Fall back to `which ffmpeg` via a login shell (picks up PATH).
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        p.arguments = ["-lc", "command -v ffmpeg"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        try? p.run()
+        p.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let path, !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) { return path }
+        return nil
     }
 }
