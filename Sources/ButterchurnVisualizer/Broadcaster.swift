@@ -1,6 +1,7 @@
 import SwiftUI
 import ScreenCaptureKit
 import AVFoundation
+import CoreGraphics
 import HaishinKit
 
 // MARK: - Broadcaster
@@ -107,13 +108,29 @@ final class Broadcaster: NSObject, ObservableObject, SCStreamOutput, SCStreamDel
     // MARK: ScreenCaptureKit capture
 
     private func startCapture() async throws {
+        // Screen Recording permission. Without it, ScreenCaptureKit redacts window
+        // info (titles/owners go nil) which also looks like "window not found".
+        guard CGPreflightScreenCaptureAccess() else {
+            CGRequestScreenCaptureAccess()   // triggers the system prompt
+            throw NSError(domain: "Broadcaster", code: 2, userInfo: [NSLocalizedDescriptionKey:
+                "Grant Screen Recording permission (System Settings ▸ Privacy & Security ▸ Screen Recording), then quit & reopen the app."])
+        }
+
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
-        // Video: the visualizer window (falls back to any window of this app).
-        let mine = content.windows.filter { $0.owningApplication?.bundleIdentifier == Bundle.main.bundleIdentifier }
-        guard let win = mine.first(where: { $0.title == Self.windowTitle }) ?? mine.first else {
+        // Find our visualizer window. A SwiftPM executable has no bundle identifier,
+        // so match by our own process ID instead, then prefer the titled window.
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let mine = content.windows.filter { $0.owningApplication?.processID == myPID }
+        let byTitle = { (w: SCWindow) in (w.title ?? "").contains("Butterchurn") }
+        let win = mine.first(where: byTitle)
+            // largest window we own (skips the tiny menu-bar panel)
+            ?? mine.max(by: { ($0.frame.width * $0.frame.height) < ($1.frame.width * $1.frame.height) })
+            // last-ditch: any window titled like the visualizer, whoever owns it
+            ?? content.windows.first(where: byTitle)
+        guard let win else {
             throw NSError(domain: "Broadcaster", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "Visualizer window not found — is it open?"])
+                          userInfo: [NSLocalizedDescriptionKey: "Visualizer window not found — make sure the visualizer window is open and on screen."])
         }
         let display = content.displays.first { NSPointInRect(CGPoint(x: win.frame.midX, y: win.frame.midY), $0.frame) }
                    ?? content.displays.first
