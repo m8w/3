@@ -173,12 +173,10 @@ final class Broadcaster: NSObject, ObservableObject, SCStreamOutput, SCStreamDel
 
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard sampleBuffer.isValid else { return }
-        if type == .screen {
-            // Only forward fully-rendered frames.
-            guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
-                  let raw = attachments.first?[.status] as? Int,
-                  SCFrameStatus(rawValue: raw) == .complete else { return }
-        }
+        // Video frames must carry a pixel buffer; audio passes straight through.
+        // (No SCStreamFrameInfo attachment parsing — that cast is fragile and was
+        // silently dropping every video frame.)
+        if type == .screen, CMSampleBufferGetImageBuffer(sampleBuffer) == nil { return }
         Task { @MainActor in self.stream.append(sampleBuffer) }
     }
 
