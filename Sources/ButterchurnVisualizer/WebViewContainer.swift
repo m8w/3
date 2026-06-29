@@ -179,7 +179,7 @@ struct WebViewContainer: NSViewRepresentable {
         // MARK: WKNavigationDelegate
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            print("[WebView] butterchurn_host loaded")
+            print("[WebView] host page loaded")
             // Make webView first responder so it can also receive events natively.
             DispatchQueue.main.async {
                 webView.window?.makeFirstResponder(webView)
