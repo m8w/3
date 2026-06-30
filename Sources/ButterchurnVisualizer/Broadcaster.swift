@@ -28,11 +28,46 @@ final class Broadcaster: ObservableObject {
 
     private var process: Process?
 
-    private var videoDevice: String {
-        ProcessInfo.processInfo.environment["CAPTURE_VIDEO_DEVICE"] ?? "Capture screen 0"
-    }
-    private var audioDevice: String {
-        ProcessInfo.processInfo.environment["CAPTURE_AUDIO_DEVICE"] ?? "BlackHole 2ch"
+    // Resolve avfoundation device indices by parsing ffmpeg's device list, so we
+    // don't depend on names (which ffmpeg matches unreliably) or a fixed index
+    // (which shifts with however many cameras are attached).
+    private func resolveDevices(ffmpeg: String) -> (video: String, audio: String) {
+        let env = ProcessInfo.processInfo.environment
+        if let v = env["CAPTURE_VIDEO_DEVICE"], let a = env["CAPTURE_AUDIO_DEVICE"] { return (v, a) }
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: ffmpeg)
+        p.arguments = ["-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""]
+        let pipe = Pipe()
+        p.standardError = pipe
+        p.standardOutput = pipe
+        try? p.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let text = String(data: data, encoding: .utf8) ?? ""
+
+        var section = ""
+        var video = env["CAPTURE_VIDEO_DEVICE"] ?? "3"
+        var audio = env["CAPTURE_AUDIO_DEVICE"] ?? "0"
+        var foundVideo = false, foundAudio = false
+        for raw in text.split(whereSeparator: \.isNewline) {
+            let l = String(raw)
+            if l.contains("video devices:") { section = "video"; continue }
+            if l.contains("audio devices:") { section = "audio"; continue }
+            guard let br = l.range(of: "] [") else { continue }
+            let after = l[br.upperBound...]
+            guard let close = after.firstIndex(of: "]") else { continue }
+            let idx = String(after[..<close])
+            guard Int(idx) != nil else { continue }
+            let name = String(after[after.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+            if section == "video", !foundVideo, name.localizedCaseInsensitiveContains("Capture screen") {
+                video = idx; foundVideo = true
+            }
+            if section == "audio", !foundAudio, name == "BlackHole 2ch" {
+                audio = idx; foundAudio = true
+            }
+        }
+        return (video, audio)
     }
 
     // MARK: Control
@@ -46,13 +81,15 @@ final class Broadcaster: ObservableObject {
             status = "ffmpeg not found — run: brew install ffmpeg"; return
         }
         let target = u.hasSuffix("/") ? u + k : u + "/" + k
+        let dev = resolveDevices(ffmpeg: ffmpeg)
+        print("[Broadcast] avfoundation devices → video:\(dev.video) audio:\(dev.audio)")
 
         let args = [
             "-hide_banner",
             "-f", "avfoundation",
             "-capture_cursor", "0",
             "-framerate", "60",
-            "-i", "\(videoDevice):\(audioDevice)",
+            "-i", "\(dev.video):\(dev.audio)",
             "-c:v", "h264_videotoolbox",
             "-realtime", "1",
             "-b:v", "16M", "-maxrate", "16M", "-bufsize", "32M",
