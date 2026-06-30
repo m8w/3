@@ -31,7 +31,7 @@ final class Broadcaster: ObservableObject {
     // Resolve avfoundation device indices by parsing ffmpeg's device list, so we
     // don't depend on names (which ffmpeg matches unreliably) or a fixed index
     // (which shifts with however many cameras are attached).
-    private func resolveDevices(ffmpeg: String) -> (video: String, audio: String) {
+    nonisolated private static func resolveDevices(ffmpeg: String) -> (video: String, audio: String) {
         let env = ProcessInfo.processInfo.environment
         if let v = env["CAPTURE_VIDEO_DEVICE"], let a = env["CAPTURE_AUDIO_DEVICE"] { return (v, a) }
 
@@ -77,57 +77,57 @@ final class Broadcaster: ObservableObject {
         let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
         let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !u.isEmpty, !k.isEmpty else { status = "Enter RTMP URL and stream key"; return }
-        guard let ffmpeg = Self.findFFmpeg() else {
-            status = "ffmpeg not found — run: brew install ffmpeg"; return
-        }
         let target = u.hasSuffix("/") ? u + k : u + "/" + k
-        let dev = resolveDevices(ffmpeg: ffmpeg)
-        print("[Broadcast] avfoundation devices → video:\(dev.video) audio:\(dev.audio)")
 
-        let args = [
-            "-hide_banner",
-            "-f", "avfoundation",
-            "-capture_cursor", "0",
-            "-framerate", "60",
-            "-i", "\(dev.video):\(dev.audio)",
-            "-c:v", "h264_videotoolbox",
-            "-realtime", "1",
-            "-b:v", "16M", "-maxrate", "16M", "-bufsize", "32M",
-            "-pix_fmt", "yuv420p",
-            "-g", "120",
-            "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
-            "-f", "flv", target,
-        ]
-        print("[Broadcast] ffmpeg \(args.joined(separator: " "))")
+        isLive = true
+        status = "Connecting…"
 
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: ffmpeg)
-        p.arguments = args
+        // ffmpeg lookup + device probe block (they run sub-processes), so do all of
+        // it — and the launch — off the main thread to keep the UI responsive.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let ffmpeg = Broadcaster.findFFmpeg() else {
+                await MainActor.run { self?.status = "ffmpeg not found — run: brew install ffmpeg"; self?.isLive = false }
+                return
+            }
+            let dev = Broadcaster.resolveDevices(ffmpeg: ffmpeg)
+            let args = [
+                "-hide_banner",
+                "-f", "avfoundation", "-capture_cursor", "0", "-framerate", "60",
+                "-i", "\(dev.video):\(dev.audio)",
+                "-c:v", "h264_videotoolbox", "-realtime", "1",
+                "-b:v", "16M", "-maxrate", "16M", "-bufsize", "32M",
+                "-pix_fmt", "yuv420p", "-g", "120",
+                "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
+                "-f", "flv", target,
+            ]
+            print("[Broadcast] avfoundation devices → video:\(dev.video) audio:\(dev.audio)")
+            print("[Broadcast] ffmpeg \(args.joined(separator: " "))")
 
-        let errPipe = Pipe()
-        p.standardError = errPipe
-        p.standardOutput = errPipe
-        errPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
-            let chunk = h.availableData
-            guard !chunk.isEmpty, let s = String(data: chunk, encoding: .utf8) else { return }
-            Task { @MainActor in self?.handleOutput(s) }
-        }
-        p.terminationHandler = { [weak self] proc in
-            Task { @MainActor in
-                self?.isLive = false
-                if self?.status == "● LIVE" || self?.status == "Connecting…" {
-                    self?.status = proc.terminationStatus == 0 ? "Stopped" : "ffmpeg exited (\(proc.terminationStatus))"
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: ffmpeg)
+            p.arguments = args
+            let errPipe = Pipe()
+            p.standardError = errPipe
+            p.standardOutput = errPipe
+            errPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+                let chunk = h.availableData
+                guard !chunk.isEmpty, let s = String(data: chunk, encoding: .utf8) else { return }
+                Task { @MainActor in self?.handleOutput(s) }
+            }
+            p.terminationHandler = { [weak self] proc in
+                Task { @MainActor in
+                    self?.isLive = false
+                    if self?.status == "● LIVE" || self?.status == "Connecting…" {
+                        self?.status = proc.terminationStatus == 0 ? "Stopped" : "ffmpeg exited (\(proc.terminationStatus))"
+                    }
                 }
             }
-        }
-
-        do {
-            try p.run()
-            process = p
-            isLive = true
-            status = "Connecting…"
-        } catch {
-            status = "Failed to launch ffmpeg: \(error.localizedDescription)"
+            do {
+                try p.run()
+                await MainActor.run { self?.process = p }
+            } catch {
+                await MainActor.run { self?.status = "Failed to launch ffmpeg: \(error.localizedDescription)"; self?.isLive = false }
+            }
         }
     }
 
@@ -160,7 +160,7 @@ final class Broadcaster: ObservableObject {
 
     // MARK: ffmpeg lookup
 
-    private static func findFFmpeg() -> String? {
+    nonisolated private static func findFFmpeg() -> String? {
         let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg", "/opt/local/bin/ffmpeg"]
         for c in candidates where FileManager.default.isExecutableFile(atPath: c) { return c }
         // Fall back to `which ffmpeg` via a login shell (picks up PATH).
