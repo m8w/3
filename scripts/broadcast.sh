@@ -39,10 +39,13 @@ AUDIO="${AUDIO:-0}"
 echo "▶ capturing  video[$VIDEO] + audio[$AUDIO]  →  $TARGET   (${FPS}fps ${VBITRATE})"
 echo "  (fullscreen the visualizer with F · press q to stop)"
 
-# -thread_queue_size: bigger input buffers so audio isn't dropped under load.
-# -af aresample=async=1000: smooth small audio-timing drift instead of glitching.
+# Capture VIDEO and AUDIO as SEPARATE avfoundation inputs so the heavy screen
+# grab can't starve the audio thread (that's what chops the streamed audio).
+# Audio gets a large -thread_queue_size buffer; aresample=async absorbs drift.
 exec ffmpeg -hide_banner \
-  -thread_queue_size 1024 -f avfoundation -capture_cursor 0 -framerate "$FPS" -i "${VIDEO}:${AUDIO}" \
+  -thread_queue_size 512  -f avfoundation -capture_cursor 0 -framerate "$FPS" -i "${VIDEO}:none" \
+  -thread_queue_size 4096 -f avfoundation -i "none:${AUDIO}" \
+  -map 0:v:0 -map 1:a:0 \
   -c:v h264_videotoolbox -realtime 1 -b:v "$VBITRATE" -maxrate "$VBITRATE" -bufsize "$VBITRATE" \
   -pix_fmt yuv420p -g $((FPS * 2)) \
   -c:a aac -b:a 160k -ar 48000 -af "aresample=async=1000" \
