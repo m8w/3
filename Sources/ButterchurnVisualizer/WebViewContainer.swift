@@ -110,6 +110,22 @@ struct WebViewContainer: NSViewRepresentable {
     }
 
     private func injectAndLoad(_ script: String, html: String, into webView: WKWebView) {
+        // Optional mixer tuning from the environment, e.g.:
+        //   MIXER_FPS=30          → cap render rate (GPU headroom for capture)
+        //   MIXER_SRC_W=1920 MIXER_SRC_H=1080 → max-res sources (heavier)
+        let env = ProcessInfo.processInfo.environment
+        var cfg: [String: Int] = [:]
+        if let v = env["MIXER_FPS"].flatMap(Int.init)   { cfg["fps"]  = v }
+        if let v = env["MIXER_SRC_W"].flatMap(Int.init) { cfg["srcW"] = v }
+        if let v = env["MIXER_SRC_H"].flatMap(Int.init) { cfg["srcH"] = v }
+        if !cfg.isEmpty,
+           let data = try? JSONSerialization.data(withJSONObject: cfg),
+           let json = String(data: data, encoding: .utf8) {
+            webView.configuration.userContentController.addUserScript(
+                WKUserScript(source: "window.__MIXER=\(json);",
+                             injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
+
         let userScript = WKUserScript(source: script,
                                       injectionTime: .atDocumentStart,
                                       forMainFrameOnly: true)
