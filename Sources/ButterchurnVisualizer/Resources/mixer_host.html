@@ -110,9 +110,16 @@ if (!butterchurn || !butterchurn.createVisualizer) {
   throw new Error('butterchurn unavailable');
 }
 
-// ── render sizes ──────────────────────────────────────────────────────────────
-const SRC_W = 960, SRC_H = 540;        // per-screen butterchurn resolution
-const OUT_W = 1920, OUT_H = 1080;      // composite / broadcast resolution
+// ── render sizes & rate ───────────────────────────────────────────────────────
+// Kept light so the GPU has headroom for screen capture during a broadcast —
+// three live visualizers at 60fps starve the capture and chop the audio.
+// Override via window.__MIXER (set by the host) if you want full quality.
+const CFG     = (window.__MIXER || {});
+const SRC_W   = CFG.srcW   || 640;     // per-screen butterchurn resolution
+const SRC_H   = CFG.srcH   || 360;
+const OUT_W   = CFG.outW   || 1920;    // composite / broadcast resolution
+const OUT_H   = CFG.outH   || 1080;
+const RENDER_FPS = CFG.fps || 30;      // cap the render loop (halves GPU vs 60)
 
 // ── microtonal EEL injection (same approach as the single-screen host) ────────
 const PF_INIT =
@@ -292,9 +299,13 @@ function composeOnce(){
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
-function frame(){
+const FRAME_MS = 1000 / RENDER_FPS;
+let _lastFrame = -1e9;
+function frame(ts){
   requestAnimationFrame(frame);
   if (paused) return;
+  if (ts - _lastFrame < FRAME_MS - 1.5) return;   // cap render rate → frees GPU for capture
+  _lastFrame = ts;
   composeOnce();
   if (hudVisible) tickHUD();
 }
