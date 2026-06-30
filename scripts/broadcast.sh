@@ -9,8 +9,16 @@
 #   ./scripts/broadcast.sh "rtmp://live.restream.io/live/YOUR_RESTREAM_KEY"
 #   ./scripts/broadcast.sh "rtmp://a.rtmp.youtube.com/live2/YOUR_YOUTUBE_KEY"
 #
+# Quality is tuned for a smooth stream (1080p30 @ 6 Mbps) — high enough to look
+# great, low enough not to outrun your upload (which is what breaks up the audio
+# on the receiving end). Override if your connection is fast:
+#   FPS=60 VBITRATE=9M ./scripts/broadcast.sh "rtmp://…"
+#
 # Stop the broadcast with  q  (or Ctrl+C).
 set -euo pipefail
+
+FPS="${FPS:-30}"
+VBITRATE="${VBITRATE:-6M}"
 
 TARGET="${1:-}"
 if [ -z "$TARGET" ]; then
@@ -28,12 +36,14 @@ AUDIO="$(printf '%s\n' "$DEVICES" | grep 'BlackHole 2ch'  | head -1 | sed -E 's/
 VIDEO="${VIDEO:-3}"
 AUDIO="${AUDIO:-0}"
 
-echo "▶ capturing  video[$VIDEO] + audio[$AUDIO]  →  $TARGET"
+echo "▶ capturing  video[$VIDEO] + audio[$AUDIO]  →  $TARGET   (${FPS}fps ${VBITRATE})"
 echo "  (fullscreen the visualizer with F · press q to stop)"
 
+# -thread_queue_size: bigger input buffers so audio isn't dropped under load.
+# -af aresample=async=1000: smooth small audio-timing drift instead of glitching.
 exec ffmpeg -hide_banner \
-  -f avfoundation -capture_cursor 0 -framerate 60 -i "${VIDEO}:${AUDIO}" \
-  -c:v h264_videotoolbox -realtime 1 -b:v 16M -maxrate 16M -bufsize 32M \
-  -pix_fmt yuv420p -g 120 \
-  -c:a aac -b:a 160k -ar 48000 \
+  -thread_queue_size 1024 -f avfoundation -capture_cursor 0 -framerate "$FPS" -i "${VIDEO}:${AUDIO}" \
+  -c:v h264_videotoolbox -realtime 1 -b:v "$VBITRATE" -maxrate "$VBITRATE" -bufsize "$VBITRATE" \
+  -pix_fmt yuv420p -g $((FPS * 2)) \
+  -c:a aac -b:a 160k -ar 48000 -af "aresample=async=1000" \
   -f flv "$TARGET"
