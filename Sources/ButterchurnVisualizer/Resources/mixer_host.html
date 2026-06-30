@@ -111,15 +111,15 @@ if (!butterchurn || !butterchurn.createVisualizer) {
 }
 
 // ── render sizes & rate ───────────────────────────────────────────────────────
-// Kept light so the GPU has headroom for screen capture during a broadcast —
-// three live visualizers at 60fps starve the capture and chop the audio.
-// Override via window.__MIXER (set by the host) if you want full quality.
+// High quality by default. Tunable via window.__MIXER — if you ever need GPU
+// headroom for screen capture (smoother captured audio), lower CFG.fps to 30,
+// which keeps the resolution sharp but halves the render load.
 const CFG     = (window.__MIXER || {});
-const SRC_W   = CFG.srcW   || 640;     // per-screen butterchurn resolution
-const SRC_H   = CFG.srcH   || 360;
+const SRC_W   = CFG.srcW   || 1280;    // per-screen butterchurn resolution (720p, sharp)
+const SRC_H   = CFG.srcH   || 720;
 const OUT_W   = CFG.outW   || 1920;    // composite / broadcast resolution
 const OUT_H   = CFG.outH   || 1080;
-const RENDER_FPS = CFG.fps || 30;      // cap the render loop (halves GPU vs 60)
+const RENDER_FPS = CFG.fps || 60;      // render rate cap
 
 // ── microtonal EEL injection (same approach as the single-screen host) ────────
 const PF_INIT =
