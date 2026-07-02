@@ -94,22 +94,20 @@ final class Broadcaster: ObservableObject {
             let fps = env["FPS"] ?? "30"
             let vbr = env["VBITRATE"] ?? "8M"
             let gop = String((Int(fps) ?? 30) * 2)
-            // Separate video/audio inputs + shared wall-clock, and crucially
-            // -max_interleave_delta 0 so the muxer never holds audio back to stay
-            // interleaved with the jittery screen video (that hold-and-chop is the
-            // stutter). Audio is left untouched; video is made CFR independently.
+            // Known-good combined capture + the single safe audio fix:
+            // -max_interleave_delta 0 lets the muxer flush audio immediately instead
+            // of holding it to interleave with the bursty screen video (that hold is
+            // the stutter). Do NOT add -use_wallclock_as_timestamps / -fps_mode cfr —
+            // avfoundation's epoch-scale timestamps send it into a frame-dup spiral.
             let args = [
                 "-hide_banner",
-                "-use_wallclock_as_timestamps", "1", "-thread_queue_size", "512",
-                "-f", "avfoundation", "-capture_cursor", "0", "-framerate", fps, "-i", "\(dev.video):none",
-                "-use_wallclock_as_timestamps", "1", "-thread_queue_size", "8192",
-                "-f", "avfoundation", "-i", "none:\(dev.audio)",
-                "-map", "0:v:0", "-map", "1:a:0",
+                "-thread_queue_size", "1024",
+                "-f", "avfoundation", "-capture_cursor", "0", "-framerate", fps, "-i", "\(dev.video):\(dev.audio)",
                 "-c:v", "h264_videotoolbox", "-realtime", "1",
                 "-b:v", vbr, "-maxrate", vbr, "-bufsize", vbr,
-                "-pix_fmt", "yuv420p", "-g", gop, "-fps_mode", "cfr",
+                "-pix_fmt", "yuv420p", "-g", gop,
                 "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
-                "-max_interleave_delta", "0", "-flush_packets", "1",
+                "-max_interleave_delta", "0",
                 "-f", "flv", target,
             ]
             print("[Broadcast] avfoundation devices → video:\(dev.video) audio:\(dev.audio)")
