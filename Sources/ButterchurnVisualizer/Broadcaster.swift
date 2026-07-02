@@ -94,15 +94,18 @@ final class Broadcaster: ObservableObject {
             let fps = env["FPS"] ?? "30"
             let vbr = env["VBITRATE"] ?? "8M"
             let gop = String((Int(fps) ?? 30) * 2)
-            // Known-good combined capture + the single safe audio fix:
-            // -max_interleave_delta 0 lets the muxer flush audio immediately instead
-            // of holding it to interleave with the bursty screen video (that hold is
-            // the stutter). Do NOT add -use_wallclock_as_timestamps / -fps_mode cfr —
-            // avfoundation's epoch-scale timestamps send it into a frame-dup spiral.
+            // Audio on its OWN avfoundation input (dedicated thread + big buffer) so
+            // the screen grab can't starve it — audio-only was always clean, it's the
+            // shared capture pipeline that chops it. -max_interleave_delta 0 flushes
+            // audio immediately. Do NOT add -use_wallclock_as_timestamps / -fps_mode —
+            // avfoundation's epoch timestamps send it into a frame-dup spiral.
             let args = [
                 "-hide_banner",
                 "-thread_queue_size", "1024",
-                "-f", "avfoundation", "-capture_cursor", "0", "-framerate", fps, "-i", "\(dev.video):\(dev.audio)",
+                "-f", "avfoundation", "-capture_cursor", "0", "-framerate", fps, "-i", "\(dev.video):none",
+                "-thread_queue_size", "16384",
+                "-f", "avfoundation", "-i", "none:\(dev.audio)",
+                "-map", "0:v:0", "-map", "1:a:0",
                 "-c:v", "h264_videotoolbox", "-realtime", "1",
                 "-b:v", vbr, "-maxrate", vbr, "-bufsize", vbr,
                 "-pix_fmt", "yuv420p", "-g", gop,
