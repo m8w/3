@@ -90,14 +90,26 @@ final class Broadcaster: ObservableObject {
                 return
             }
             let dev = Broadcaster.resolveDevices(ffmpeg: ffmpeg)
+            let env = ProcessInfo.processInfo.environment
+            let fps = env["FPS"] ?? "30"
+            let vbr = env["VBITRATE"] ?? "8M"
+            let gop = String((Int(fps) ?? 30) * 2)
+            // Separate video/audio inputs + shared wall-clock, and crucially
+            // -max_interleave_delta 0 so the muxer never holds audio back to stay
+            // interleaved with the jittery screen video (that hold-and-chop is the
+            // stutter). Audio is left untouched; video is made CFR independently.
             let args = [
                 "-hide_banner",
-                "-f", "avfoundation", "-capture_cursor", "0", "-framerate", "60",
-                "-i", "\(dev.video):\(dev.audio)",
+                "-use_wallclock_as_timestamps", "1", "-thread_queue_size", "512",
+                "-f", "avfoundation", "-capture_cursor", "0", "-framerate", fps, "-i", "\(dev.video):none",
+                "-use_wallclock_as_timestamps", "1", "-thread_queue_size", "8192",
+                "-f", "avfoundation", "-i", "none:\(dev.audio)",
+                "-map", "0:v:0", "-map", "1:a:0",
                 "-c:v", "h264_videotoolbox", "-realtime", "1",
-                "-b:v", "16M", "-maxrate", "16M", "-bufsize", "32M",
-                "-pix_fmt", "yuv420p", "-g", "120",
+                "-b:v", vbr, "-maxrate", vbr, "-bufsize", vbr,
+                "-pix_fmt", "yuv420p", "-g", gop, "-fps_mode", "cfr",
                 "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
+                "-max_interleave_delta", "0", "-flush_packets", "1",
                 "-f", "flv", target,
             ]
             print("[Broadcast] avfoundation devices → video:\(dev.video) audio:\(dev.audio)")

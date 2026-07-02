@@ -44,11 +44,17 @@ echo "  (fullscreen the visualizer with F · press q to stop)"
 # capture has irregular frame timing; without a shared clock the muxer keeps
 # A/V in sync by periodically chopping the audio — that's the regular break.
 # Sharing the wall-clock keeps them aligned so the audio is left intact.
+# Key anti-stutter setting: -max_interleave_delta 0 stops the muxer from holding
+# audio back to stay interleaved with the (jittery) screen-capture video — that
+# hold-and-chop is what breaks the sound. Video is made CFR independently; audio
+# is left completely untouched (no resampling). A/V sync doesn't need to be tight
+# for a music visualiser, so we favour pristine audio.
 exec ffmpeg -hide_banner \
   -use_wallclock_as_timestamps 1 -thread_queue_size 512  -f avfoundation -capture_cursor 0 -framerate "$FPS" -i "${VIDEO}:none" \
-  -use_wallclock_as_timestamps 1 -thread_queue_size 4096 -f avfoundation -i "none:${AUDIO}" \
+  -use_wallclock_as_timestamps 1 -thread_queue_size 8192 -f avfoundation -i "none:${AUDIO}" \
   -map 0:v:0 -map 1:a:0 \
   -c:v h264_videotoolbox -realtime 1 -b:v "$VBITRATE" -maxrate "$VBITRATE" -bufsize "$VBITRATE" \
-  -pix_fmt yuv420p -g $((FPS * 2)) \
-  -c:a aac -b:a 160k -ar 48000 -af "aresample=async=1" \
+  -pix_fmt yuv420p -g $((FPS * 2)) -fps_mode cfr \
+  -c:a aac -b:a 160k -ar 48000 \
+  -max_interleave_delta 0 -flush_packets 1 \
   -f flv "$TARGET"
