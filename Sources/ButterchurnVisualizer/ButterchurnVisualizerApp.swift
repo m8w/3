@@ -16,12 +16,13 @@ struct ButterchurnVisualizerApp: App {
                     ContentView()
                 }
             }
-            // Comfortable default on a Mac Mini driving an external display.
-            .frame(minWidth: 960, minHeight: 540)
+            // Opens ~720p; freely resizable so you can size it for OBS window
+            // capture and keep the rest of the Mac for other work.
+            .frame(minWidth: 640, minHeight: 360, idealWidth: 1280, idealHeight: 720)
         }
-        // Full-screen chromeless window — the WebView fills everything.
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        // A normal titled window: freely movable/resizable, and OBS can find it
+        // by name ("Butterchurn — Microtonal Visualizer") in Window Capture.
+        .windowResizability(.contentMinSize)
         .commands {
             // ⌘W closes; everything else is handled inside the WebView.
             CommandGroup(replacing: .newItem) {}
