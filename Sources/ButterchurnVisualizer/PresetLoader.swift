@@ -38,6 +38,57 @@ final class PresetLoader {
         }
     }
 
+    // MARK: - Hot folder (live injection)
+    //
+    // If HOT_PRESETS points at a folder, poll it and inject any NEW .json presets
+    // into the running mix — so the curator can drop keepers in and they go live
+    // without a restart. Point HOT_PRESETS at the curator's CURATE_OUTPUT folder.
+
+    private static let hotQueue = DispatchQueue(label: "hotfolder")
+    private static var hotInjected = Set<String>()
+    private static var hotBusy = false
+    private static var hotTimer: Timer?
+
+    static func watchHotFolder(into webView: WKWebView) {
+        guard let raw = ProcessInfo.processInfo.environment["HOT_PRESETS"], !raw.isEmpty else { return }
+        let dir = URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
+        print("[HotFolder] watching \(dir.path) for new presets (every 6s)")
+        hotTimer?.invalidate()
+        hotTimer = Timer.scheduledTimer(withTimeInterval: 6.0, repeats: true) { [weak webView] _ in
+            guard let webView else { return }
+            hotQueue.async {
+                guard !hotBusy else { return }
+                hotBusy = true; defer { hotBusy = false }
+                // Live-rotation cap (memory safety) — ALL keepers still save to disk
+                // and bundle on the next rebuild; this only limits how many are held
+                // in the running WebView at once. Raise with HOT_MAX if you have RAM.
+                let hotMax = Int(ProcessInfo.processInfo.environment["HOT_MAX"] ?? "6000") ?? 6000
+                guard hotInjected.count < hotMax else { return }
+                guard let files = try? FileManager.default.contentsOfDirectory(
+                    at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return }
+                let fresh = files.filter { $0.pathExtension.lowercased() == "json"
+                                           && !hotInjected.contains($0.lastPathComponent) }
+                guard !fresh.isEmpty else { return }
+                var presets: [String: Any] = [:]
+                for url in fresh.prefix(300) {           // cap per tick to avoid a giant eval
+                    hotInjected.insert(url.lastPathComponent)
+                    if let data = try? Data(contentsOf: url),
+                       let obj  = try? JSONSerialization.jsonObject(with: data) {
+                        presets[url.deletingPathExtension().lastPathComponent] = obj
+                    }
+                }
+                guard !presets.isEmpty,
+                      let data = try? JSONSerialization.data(withJSONObject: presets),
+                      let json = String(data: data, encoding: .utf8) else { return }
+                DispatchQueue.main.async {
+                    webView.evaluateJavaScript("if(typeof window._addPresets==='function')window._addPresets(\(json));",
+                                               completionHandler: nil)
+                    print("[HotFolder] +\(presets.count) live preset(s) (watched \(hotInjected.count))")
+                }
+            }
+        }
+    }
+
     // MARK: - Private
 
     private static func injectBatch(urls: [URL], offset: Int, into webView: WKWebView) {

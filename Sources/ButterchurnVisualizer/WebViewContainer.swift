@@ -201,6 +201,7 @@ struct WebViewContainer: NSViewRepresentable {
                 webView.window?.makeFirstResponder(webView)
             }
             PresetLoader.injectAll(into: webView)
+            PresetLoader.watchHotFolder(into: webView)   // live-inject curator keepers as they land
         }
 
         func webView(_ webView: WKWebView,
