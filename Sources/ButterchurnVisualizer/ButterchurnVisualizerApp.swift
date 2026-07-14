@@ -18,7 +18,7 @@ struct ButterchurnVisualizerApp: App {
             }
             // Opens ~720p; freely resizable so you can size it for OBS window
             // capture and keep the rest of the Mac for other work.
-            .frame(minWidth: 640, minHeight: 360, idealWidth: 1280, idealHeight: 720)
+            .frame(minWidth: 640, idealWidth: 1280, minHeight: 360, idealHeight: 720)
         }
         // A normal titled window: freely movable/resizable, and OBS can find it
         // by name ("Butterchurn — Microtonal Visualizer") in Window Capture.
