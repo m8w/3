@@ -51,6 +51,7 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
     private let manifestURL: URL
     private let cfg: [String: Any]
     private let limit: Int
+    private let keepTarget: Int
     private let timeoutSecs: Double
 
     private(set) var webView: WKWebView!
@@ -84,6 +85,7 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
         self.outputDir = outputDir
         self.manifestURL = outputDir.appendingPathComponent("_manifest.tsv")
         self.limit = env["CURATE_LIMIT"].flatMap(Int.init) ?? Int.max
+        self.keepTarget = env["CURATE_KEEP_TARGET"].flatMap(Int.init) ?? Int.max
         self.timeoutSecs = env["CURATE_TIMEOUT"].flatMap(Double.init) ?? 20.0
 
         func d(_ k: String, _ v: Double) -> Double { env[k].flatMap(Double.init) ?? v }
@@ -160,9 +162,13 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
             status = "no .milk files found in \(inputDir.path)"; finished = true; return
         }
 
+        if keepTarget != Int.max {
+            print("[Curator] will stop once \(keepTarget) keeper(s) are collected")
+        }
         var done = 0
         for url in files {
             if done >= limit { break }
+            if kept >= keepTarget { print("[Curator] reached keep target of \(keepTarget) — stopping"); break }
             done += 1
 
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
