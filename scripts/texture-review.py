@@ -23,11 +23,19 @@ REMOVED = os.path.join(ROOT, "_removed")
 
 # Filename hints (just a starting suggestion — you confirm visually).
 HINTS = [
+    # cannabis
     "weed", "pot", "cannabis", "marijuana", "ganja", "420", "hemp", "kush",
-    "blunt", "joint", "doob", "dank", "bud", "leaf", "stoner",
+    "blunt", "joint", "doob", "dank", "bud", "leaf", "stoner", "smoke",
+    # people
     "face", "person", "people", "portrait", "selfie", "model", "nude", "naked",
     "lady", "girl", "boy", "woman", "man", "guy", "human", "body", "celeb",
-    "podcast", "ground",
+    "podcast", "hand", "eye", "skin", "hair",
+    # animals
+    "cat", "dog", "animal", "bird", "horse", "lion", "tiger", "bear", "wolf",
+    "deer", "snake", "spider", "insect", "butterfly", "fish", "frog", "pet",
+    # recognizable / likely-copyright
+    "logo", "brand", "poster", "movie", "film", "album", "cover", "cartoon",
+    "anime", "meme", "photo", "picture", "ground", "landscape", "city",
 ]
 
 def list_images():
