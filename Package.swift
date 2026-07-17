@@ -54,7 +54,10 @@ let package = Package(
                 .process("Resources/mixer_host.html"),
                 .process("Resources/curate_host.html"),
                 .process("Resources/microtonal_warp.milk"),
-                .process("Resources/presets"),
+                // .copy (not .process) so the whole presets tree is bundled verbatim —
+                // curated megapack presets often share filenames with existing ones,
+                // and .process rejects duplicate resource names.
+                .copy("Resources/presets"),
             ]
         )
     ]
