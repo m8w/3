@@ -202,6 +202,9 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
             if processed % 200 == 0 {
                 print("[Curator] \(processed)/\(total) processed · kept \(kept) · failed \(failed)")
             }
+            // Reload the curate WebView periodically so a multi-day run doesn't
+            // bloat its memory and start timing out on everything.
+            if processed % 1500 == 0 { await reloadAndWait() }
         }
 
         try? manifest?.close()
@@ -283,10 +286,17 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
             for line in data.split(separator: "\n") {
                 let cols = line.split(separator: "\t", omittingEmptySubsequences: false)
                 if let h = cols.first { seen.insert(String(h)) }
-                if cols.count >= 4, cols[1] == "1" { kept += 1; usedNames.insert(String(cols[3])) }
+                if cols.count >= 4, cols[1] == "1" { usedNames.insert(String(cols[3])) }
             }
             processed = seen.count
-            print("[Curator] resuming — \(seen.count) already processed, \(kept) previously kept")
+        }
+        // Real keeper count = the .json files actually on disk (the manifest can be
+        // polluted by past overlapping runs, so don't trust its keep lines).
+        if let outs = try? FileManager.default.contentsOfDirectory(at: outputDir, includingPropertiesForKeys: nil) {
+            kept = outs.filter { $0.pathExtension.lowercased() == "json" }.count
+        }
+        if kept > 0 || processed > 0 {
+            print("[Curator] resuming — \(processed) already processed, \(kept) keepers on disk")
         }
         if !FileManager.default.fileExists(atPath: manifestURL.path) {
             FileManager.default.createFile(atPath: manifestURL.path, contents: nil)
