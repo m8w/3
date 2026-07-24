@@ -89,6 +89,47 @@ final class PresetLoader {
         }
     }
 
+    // MARK: - Reject (live cull)
+    //
+    // Called when you press X on a preset. Always logs the name to
+    // ~/butterchurn_rejected.txt. If REJECT_DIR points at your source presets
+    // folder, the matching .json/.milk file(s) are also moved out (to
+    // ~/butterchurn_rejected_presets/) so a rebuild won't bring them back.
+
+    static func rejectPreset(named name: String) {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let logURL = home.appendingPathComponent("butterchurn_rejected.txt")
+        let line = name + "\n"
+        if let fh = try? FileHandle(forWritingTo: logURL) {
+            fh.seekToEndOfFile(); if let d = line.data(using: .utf8) { fh.write(d) }; try? fh.close()
+        } else {
+            try? line.write(to: logURL, atomically: true, encoding: .utf8)
+        }
+
+        guard let raw = ProcessInfo.processInfo.environment["REJECT_DIR"], !raw.isEmpty else {
+            print("[Reject] logged '\(name)' (set REJECT_DIR to also delete its file)")
+            return
+        }
+        let src = URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
+        let trash = home.appendingPathComponent("butterchurn_rejected_presets")
+        DispatchQueue.global(qos: .utility).async {
+            try? FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+            guard let en = FileManager.default.enumerator(at: src,
+                includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return }
+            var moved = 0
+            for case let url as URL in en {
+                let ext = url.pathExtension.lowercased()
+                guard ext == "json" || ext == "milk",
+                      url.deletingPathExtension().lastPathComponent == name else { continue }
+                let dest = trash.appendingPathComponent("\(moved)_\(url.lastPathComponent)")
+                try? FileManager.default.removeItem(at: dest)
+                try? FileManager.default.moveItem(at: url, to: dest)
+                moved += 1
+            }
+            print("[Reject] '\(name)' → removed \(moved) file(s) from presets")
+        }
+    }
+
     // MARK: - Private
 
     private static func injectBatch(urls: [URL], offset: Int, into webView: WKWebView) {

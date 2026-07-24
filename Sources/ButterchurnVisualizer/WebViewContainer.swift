@@ -172,6 +172,7 @@ struct WebViewContainer: NSViewRepresentable {
                 case "]":  cmd = "wup"    // selected weight +
                 case "m":  cmd = "auto"   // toggle audio-reactive auto-mix
                 case "0":  cmd = "reset"  // reset mix to defaults
+                case "x":  cmd = "reject" // cull the selected screen's preset for good
                 default:   return
                 }
             }
@@ -214,7 +215,10 @@ struct WebViewContainer: NSViewRepresentable {
 
         func userContentController(_ ucc: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
-            if let body = message.body as? String {
+            guard let body = message.body as? String else { return }
+            if body.hasPrefix("REJECT\t") {
+                PresetLoader.rejectPreset(named: String(body.dropFirst("REJECT\t".count)))
+            } else {
                 print("[JS] \(body)")
             }
         }

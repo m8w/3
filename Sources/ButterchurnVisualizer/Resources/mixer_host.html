@@ -90,7 +90,7 @@
     <button class="mx" data-act="hide">GRAPHICS ONLY ⤢</button>
   </div>
 </div>
-<div id="ginfo">Click ＋/− to add or subtract a screen · slider = weight · ◀ ▶ change preset · GRAPHICS ONLY hides this bar (press H to bring it back) · F = fullscreen</div>
+<div id="ginfo">Click ＋/− add/subtract · slider = weight · ◀ ▶ change preset · select a screen (1/2/3) then X = reject that preset for good · H hides bar · F fullscreen</div>
 
 <!-- Preset queue shim (PresetLoader may inject before the module runs) -->
 <script>
@@ -188,6 +188,7 @@ const viz = srcCanvas.map(c => { c.width = SRC_W; c.height = SRC_H;
 
 const allPresets = {};
 const names = [];
+const rejected = new Set();   // names culled live via the reject key (X)
 const screen = [
   { idx:-1, sign:+1, weight:0.85, band:'bass' },
   { idx:-1, sign:+1, weight:0.70, band:'mid'  },
@@ -201,6 +202,7 @@ function loadOn(s, blend) {
   const start = screen[s].idx < 0 ? ((Math.random()*n)|0) : (screen[s].idx + 1) % n;
   for (let i = 0; i < n; i++) {
     const idx = (start + i) % n;
+    if (rejected.has(names[idx])) continue;
     try { viz[s].loadPreset(patchPreset(allPresets[names[idx]]), blend); screen[s].idx = idx; return true; }
     catch(e) { /* try next */ }
   }
@@ -212,9 +214,23 @@ function stepOn(s, dir, blend) {
   let start = screen[s].idx < 0 ? 0 : (screen[s].idx + dir + n) % n;
   for (let i = 0; i < n; i++) {
     const idx = (start + dir*i + n*1000) % n;
+    if (rejected.has(names[idx])) continue;
     try { viz[s].loadPreset(patchPreset(allPresets[names[idx]]), blend); screen[s].idx = idx; refreshHUD(); return; }
     catch(e) {}
   }
+}
+
+// Reject the preset currently on the selected screen: drop it from the live
+// rotation AND tell Swift to move its file out of the presets folder for good.
+function rejectCurrent() {
+  const s = selected, idx = screen[s].idx;
+  if (idx < 0) return;
+  const name = names[idx];
+  rejected.add(name);
+  try { window.webkit.messageHandlers.log.postMessage('REJECT\t' + name); } catch(_) {}
+  log('rejected: ' + name);
+  stepOn(s, +1, 0);   // jump this screen to the next (skips rejected)
+  showBar();
 }
 
 // Independent staggered auto-cycling so the mix keeps evolving.
@@ -412,6 +428,7 @@ window._keyCommand = function(cmd){
     case 'wup':  screen[selected].weight = Math.min(1.6, screen[selected].weight + 0.1); refreshHUD(); break;
     case 'auto': autoMix = !autoMix; refreshHUD(); break;
     case 'reset':resetMix(); break;
+    case 'reject': rejectCurrent(); break;      // X = cull the selected screen's preset for good
     case 'pause':paused = !paused; break;
     case 'hud':  setHud(!hudVisible); return;   // H = HUD ⇄ graphics-only
   }
@@ -420,7 +437,7 @@ window._keyCommand = function(cmd){
 // Local keyboard fallback (when the WebView itself has focus).
 document.addEventListener('keydown', e => {
   const map = { '1':'1','2':'2','3':'3','n':'next','p':'prev','b':'cut','s':'sign',
-                '[':'wdn',']':'wup','m':'auto','0':'reset',' ':'pause','h':'hud',
+                '[':'wdn',']':'wup','m':'auto','0':'reset','x':'reject',' ':'pause','h':'hud',
                 'ArrowRight':'next','ArrowLeft':'prev' };
   const c = map[e.key]; if (c){ e.preventDefault(); window._keyCommand(c); }
 });
