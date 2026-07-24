@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import WebKit
 import CryptoKit
 
@@ -212,6 +213,12 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
         print("[Curator] \(status)")
         print("[Curator] keepers written to \(outputDir.path)")
         finished = true
+        // Auto-quit when driven by the curate-and-bundle script so it can proceed
+        // to the build step unattended.
+        if ProcessInfo.processInfo.environment["CURATE_AUTOQUIT"] == "1" {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            NSApplication.shared.terminate(nil)
+        }
     }
 
     // MARK: JS bridge
