@@ -139,6 +139,23 @@ struct WebViewContainer: NSViewRepresentable {
 
         weak var webView: WKWebView?
         private var keyMonitor: Any?
+        private var preFillFrame: NSRect?
+
+        // "Fill screen" that stays on the CURRENT Space (unlike ⌃⌘F fullscreen,
+        // which moves to a separate Space where macOS freezes our rendering when
+        // you switch to OBS). Toggles the window between its size and the screen.
+        func toggleFillScreen() {
+            guard let win = webView?.window else { return }
+            if let f = preFillFrame {
+                win.setFrame(f, display: true, animate: false)
+                preFillFrame = nil
+            } else {
+                preFillFrame = win.frame
+                if let target = (win.screen ?? NSScreen.main)?.visibleFrame {
+                    win.setFrame(target, display: true, animate: false)
+                }
+            }
+        }
 
         // MARK: Key handling
         // NSEvent monitor works regardless of first-responder state.
@@ -173,6 +190,7 @@ struct WebViewContainer: NSViewRepresentable {
                 case "m":  cmd = "auto"   // toggle audio-reactive auto-mix
                 case "0":  cmd = "reset"  // reset mix to defaults
                 case "x":  cmd = "reject" // cull the selected screen's preset for good
+                case "f":  toggleFillScreen(); return   // same-Space fill (keeps rendering)
                 default:   return
                 }
             }

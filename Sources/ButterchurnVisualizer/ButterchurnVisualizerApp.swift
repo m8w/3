@@ -7,6 +7,16 @@ struct ButterchurnVisualizerApp: App {
     @StateObject private var curator = CuratorBox()
     @StateObject private var broadcaster = Broadcaster()
 
+    // Held for the app's lifetime so macOS App Nap never throttles our rendering
+    // when we're backgrounded/occluded — the visuals must keep moving for OBS.
+    private static var activity: NSObjectProtocol?
+
+    init() {
+        Self.activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleDisplaySleepDisabled],
+            reason: "Live visualizer broadcast")
+    }
+
     var body: some Scene {
         WindowGroup("Butterchurn — Microtonal Visualizer") {
             Group {
