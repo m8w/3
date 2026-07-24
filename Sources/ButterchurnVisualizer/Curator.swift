@@ -54,6 +54,7 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
     private let limit: Int
     private let keepTarget: Int
     private let timeoutSecs: Double
+    private let pauseMs: Int
 
     private(set) var webView: WKWebView!
     private var seen = Set<String>()      // content hashes already processed
@@ -88,6 +89,9 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
         self.limit = env["CURATE_LIMIT"].flatMap(Int.init) ?? Int.max
         self.keepTarget = env["CURATE_KEEP_TARGET"].flatMap(Int.init) ?? Int.max
         self.timeoutSecs = env["CURATE_TIMEOUT"].flatMap(Double.init) ?? 20.0
+        // Idle gap between presets so the curator can run alongside a live
+        // broadcast without starving it. 0 = flat-out (solo runs).
+        self.pauseMs = env["CURATE_PAUSE_MS"].flatMap(Int.init) ?? 0
 
         func d(_ k: String, _ v: Double) -> Double { env[k].flatMap(Double.init) ?? v }
         func i(_ k: String, _ v: Int) -> Int { env[k].flatMap(Int.init) ?? v }
@@ -206,6 +210,8 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
             // Reload the curate WebView periodically so a multi-day run doesn't
             // bloat its memory and start timing out on everything.
             if processed % 1500 == 0 { await reloadAndWait() }
+            // Breather so a live broadcast keeps the GPU/CPU it needs.
+            if pauseMs > 0 { try? await Task.sleep(nanoseconds: UInt64(pauseMs) * 1_000_000) }
         }
 
         try? manifest?.close()
