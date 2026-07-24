@@ -50,6 +50,16 @@ struct WebViewContainer: NSViewRepresentable {
         wv.enclosingScrollView?.hasHorizontalScroller = false
         wv.enclosingScrollView?.hasVerticalScroller   = false
 
+        // Keep rendering even when the window is covered or the app is in the
+        // background — otherwise WebKit pauses animation the instant you switch to
+        // OBS and the stream freezes. This disables WebKit's occlusion detection.
+        let sel = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
+        if wv.responds(to: sel) {
+            typealias Fn = @convention(c) (AnyObject, Selector, Bool) -> Void
+            let fn = unsafeBitCast(wv.method(for: sel), to: Fn.self)
+            fn(wv, sel, false)
+        }
+
         return wv
     }
 
