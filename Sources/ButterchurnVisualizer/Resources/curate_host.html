@@ -126,6 +126,9 @@ if (!butterchurn || !butterchurn.createVisualizer) {
     catch (e) { return { ok:false, reason:'convert:'+(e&&e.message||e) }; }
     if (!preset || !preset.baseVals) return { ok:false, reason:'empty' };
 
+    // Fast bulk mode: convert and keep everything, no rendering/scoring.
+    if (cfg.noRender) return { ok:true, keep:true, score:0, preset: JSON.stringify(preset) };
+
     try { viz.loadPreset(preset, 0.0); }
     catch (e) { return { ok:false, reason:'load:'+(e&&e.message||e) }; }
 

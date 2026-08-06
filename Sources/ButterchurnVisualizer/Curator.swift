@@ -96,6 +96,9 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
         func d(_ k: String, _ v: Double) -> Double { env[k].flatMap(Double.init) ?? v }
         func i(_ k: String, _ v: Int) -> Int { env[k].flatMap(Int.init) ?? v }
         self.cfg = [
+            // CURATE_KEEP_ALL=1 → fast bulk mode: convert & keep every preset,
+            // no rendering/scoring (unfiltered variety; cull duds live with X).
+            "noRender": env["CURATE_KEEP_ALL"] == "1",
             "frames": i("CURATE_FRAMES", 30),
             "fps":    i("CURATE_FPS", 30),
             "warm":   i("CURATE_WARM", 6),
@@ -279,7 +282,10 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
         guard let en = FileManager.default.enumerator(
             at: inputDir, includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles]) else { return [] }
-        return (en.allObjects as? [URL] ?? []).filter { $0.pathExtension.lowercased() == "milk" }
+        var urls = (en.allObjects as? [URL] ?? []).filter { $0.pathExtension.lowercased() == "milk" }
+        // Shuffle for a varied spread (esp. with CURATE_LIMIT for a quick bulk add).
+        if ProcessInfo.processInfo.environment["CURATE_SHUFFLE"] == "1" { urls.shuffle() }
+        return urls
     }
 
     private func write(json: String, baseName: String, hash: String) -> String {
