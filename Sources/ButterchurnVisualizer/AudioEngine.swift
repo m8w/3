@@ -23,7 +23,11 @@ final class AudioEngine: ObservableObject {
     /// Called on the main thread with 32 normalised [0,1] magnitudes.
     var onQ: (([Float]) -> Void)?
 
-    static let inputDeviceName = "BlackHole 2ch"
+    // Which input device drives the visuals. Defaults to BlackHole 2ch; set the
+    // AUDIO_DEVICE env var to any input's exact name (e.g. your SN2 interface) to
+    // react to that instead. If the name isn't found, the console prints every
+    // available input so you can copy the right one.
+    static let inputDeviceName = ProcessInfo.processInfo.environment["AUDIO_DEVICE"] ?? "BlackHole 2ch"
 
     private var audioQueue: AudioQueueRef?
     private var fft:        MicrotonalFFT?
