@@ -160,24 +160,43 @@ function patchPreset(base) {
 
 // ── audio: shared 32-bin → 1024-bin frequency + waveform buffers ──────────────
 const FBINS = 1024;
-const freqData = new Uint8Array(FBINS);
+// Per-screen frequency data so each screen can react to its own channel in
+// stereo mode (left / center / right). In mono all three get the same data.
+const freqData = [ new Uint8Array(FBINS), new Uint8Array(FBINS), new Uint8Array(FBINS) ];
 const timeData = new Uint8Array(FBINS); timeData.fill(128);
 const lastQ = new Float32Array(32);
-let bass = 0, mid = 0, treb = 0;       // smoothed band energies (0..~1)
+let stereoReactive = false;   // set true once stereo data arrives
+// Smoothed band energies per screen (0..~1).
+const band = [ {bass:0,mid:0,treb:0}, {bass:0,mid:0,treb:0}, {bass:0,mid:0,treb:0} ];
 
-function updateAudio(q) {
-  for (let i = 0; i < 32; i++) lastQ[i] = q[i];
+// Process one 32-bin channel into screen s: fills freqData[s] + band[s].
+function feedChannel(q, s) {
+  const fd = freqData[s];
   for (let b = 0; b < FBINS; b++) {
     const frac = (b / FBINS) * 31, lo = frac | 0, hi = Math.min(lo + 1, 31), t = frac - lo;
-    freqData[b] = ((q[lo] * (1 - t) + q[hi] * t) * 220) | 0;
+    fd[b] = ((q[lo] * (1 - t) + q[hi] * t) * 220) | 0;
   }
   let lo = 0, md = 0, hi = 0;
   for (let i = 0;  i < 8;  i++) lo += q[i];
   for (let i = 8;  i < 24; i++) md += q[i];
   for (let i = 24; i < 32; i++) hi += q[i];
-  bass = bass * 0.8 + (lo / 8)  * 0.2;
-  mid  = mid  * 0.8 + (md / 16) * 0.2;
-  treb = treb * 0.8 + (hi / 8)  * 0.2;
+  const bd = band[s];
+  bd.bass = bd.bass * 0.8 + (lo / 8)  * 0.2;
+  bd.mid  = bd.mid  * 0.8 + (md / 16) * 0.2;
+  bd.treb = bd.treb * 0.8 + (hi / 8)  * 0.2;
+}
+
+// Mono: every screen reacts to the same signal (unchanged behaviour).
+function updateAudio(q) {
+  for (let i = 0; i < 32; i++) lastQ[i] = q[i];
+  feedChannel(q, 0); feedChannel(q, 1); feedChannel(q, 2);
+}
+
+// Stereo: screen 0 ← left, screen 1 ← center, screen 2 ← right.
+function updateStereo(l, r) {
+  const c = new Array(32);
+  for (let i = 0; i < 32; i++) { c[i] = (l[i] + r[i]) * 0.5; lastQ[i] = c[i]; }
+  feedChannel(l, 0); feedChannel(c, 1); feedChannel(r, 2);
 }
 
 // ── three independent visualizers ─────────────────────────────────────────────
@@ -291,18 +310,19 @@ gl.uniform1i(gl.getUniformLocation(prog, 't2'), 2);
 const swLoc = gl.getUniformLocation(prog, 'sw');
 gl.viewport(0, 0, OUT_W, OUT_H);
 
-function bandEnergy(b){ return b === 'bass' ? bass : b === 'mid' ? mid : treb; }
+function bandEnergy(s){ const bd = band[s]; const k = screen[s].band; return bd[k]; }
 function effectiveWeight(s){
   const base = screen[s].weight;
   if (!autoMix) return base;
-  // Modulate the manual base around the screen's audio band.
-  const e = Math.min(1.2, bandEnergy(screen[s].band) * 1.6);
+  // Modulate the manual base around this screen's audio band (its own channel
+  // in stereo mode).
+  const e = Math.min(1.2, bandEnergy(s) * 1.6);
   return Math.max(0, Math.min(1.6, base * (0.45 + 0.95 * e)));
 }
 
 // ── render loop: render all three, upload, composite — all in one rAF turn ────
 function composeOnce(){
-  for (let s = 0; s < 3; s++) viz[s].render({ frequencyData: freqData, timeByteData: timeData });
+  for (let s = 0; s < 3; s++) viz[s].render({ frequencyData: freqData[s], timeByteData: timeData });
   for (let s = 0; s < 3; s++) {
     gl.activeTexture(gl.TEXTURE0 + s);
     gl.bindTexture(gl.TEXTURE_2D, tex[s]);
@@ -397,7 +417,8 @@ bar.addEventListener('input', e => {
 });
 
 // ── Swift bridges ─────────────────────────────────────────────────────────────
-window._updateQ = q => updateAudio(q);
+window._updateQ = q => { stereoReactive = false; updateAudio(q); };
+window._updateStereo = (l, r) => { stereoReactive = true; updateStereo(l, r); };
 
 window._addPresets = function(incoming){
   const newNames = Object.keys(incoming);

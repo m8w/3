@@ -227,4 +227,17 @@ public final class AdaptiveNormaliser {
 
         return values
     }
+
+    /// Normalise L and R together with a SINGLE shared gain, so the stereo
+    /// balance (panning/imaging) is preserved instead of each channel being
+    /// independently pumped up to full scale.
+    public func normaliseStereo(_ l: inout [Float], _ r: inout [Float]) {
+        var lMax: Float = 0, rMax: Float = 0
+        vDSP_maxv(l, 1, &lMax, vDSP_Length(l.count))
+        vDSP_maxv(r, 1, &rMax, vDSP_Length(r.count))
+        runningMax = max(runningMax * decayRate, max(max(lMax, rMax), floor))
+        var inv = 1.0 / runningMax
+        vDSP_vsmul(l, 1, &inv, &l, 1, vDSP_Length(l.count))
+        vDSP_vsmul(r, 1, &inv, &r, 1, vDSP_Length(r.count))
+    }
 }

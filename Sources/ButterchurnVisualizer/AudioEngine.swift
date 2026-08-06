@@ -20,14 +20,21 @@ import AudioToolbox
 
 final class AudioEngine: ObservableObject {
 
-    /// Called on the main thread with 32 normalised [0,1] magnitudes.
+    /// Called on the main thread with 32 normalised [0,1] magnitudes (mono).
     var onQ: (([Float]) -> Void)?
+    /// Called on the main thread with per-channel magnitudes (left, right) when
+    /// stereo-reactive mode is on.
+    var onStereoQ: (([Float], [Float]) -> Void)?
 
     // Which input device drives the visuals. Defaults to BlackHole 2ch; set the
     // AUDIO_DEVICE env var to any input's exact name (e.g. your SN2 interface) to
     // react to that instead. If the name isn't found, the console prints every
     // available input so you can copy the right one.
     static let inputDeviceName = ProcessInfo.processInfo.environment["AUDIO_DEVICE"] ?? "BlackHole 2ch"
+
+    // Stereo-reactive mode: capture L/R separately and drive the 3 screens with
+    // left / center / right. Off by default (mono, unchanged). STEREO_REACTIVE=1.
+    static let stereo = ProcessInfo.processInfo.environment["STEREO_REACTIVE"] == "1"
 
     private var audioQueue: AudioQueueRef?
     private var fft:        MicrotonalFFT?
@@ -62,16 +69,17 @@ final class AudioEngine: ObservableObject {
             return
         }
 
-        // 4. Request Float32 mono PCM at BlackHole's native rate.
-        //    AudioQueue de-interleaves / down-mixes from the 2ch hardware.
+        // 4. Request Float32 PCM at the device's native rate. Mono (down-mixed by
+        //    AudioQueue) normally; interleaved stereo when stereo-reactive is on.
+        let chans: UInt32 = Self.stereo ? 2 : 1
         var fmt = AudioStreamBasicDescription(
             mSampleRate:       sr,
             mFormatID:         kAudioFormatLinearPCM,
             mFormatFlags:      kLinearPCMFormatFlagIsFloat | kLinearPCMFormatFlagIsPacked,
-            mBytesPerPacket:   4,
+            mBytesPerPacket:   4 * chans,
             mFramesPerPacket:  1,
-            mBytesPerFrame:    4,
-            mChannelsPerFrame: 1,
+            mBytesPerFrame:    4 * chans,
+            mChannelsPerFrame: chans,
             mBitsPerChannel:   32,
             mReserved:         0
         )
@@ -106,8 +114,8 @@ final class AudioEngine: ObservableObject {
             print("[AudioEngine] Route to \(Self.inputDeviceName) failed: \(routeStatus)")
         }
 
-        // 7. Allocate and prime 3 ring buffers (~93 ms each at 44100 Hz).
-        let bufBytes = UInt32(4096 * MemoryLayout<Float>.size)
+        // 7. Allocate and prime 3 ring buffers (4096 frames each; ×channels).
+        let bufBytes = UInt32(4096 * Int(chans) * MemoryLayout<Float>.size)
         for _ in 0..<3 {
             var buf: AudioQueueBufferRef?
             if AudioQueueAllocateBuffer(q, bufBytes, &buf) == noErr, let b = buf {
@@ -145,14 +153,26 @@ final class AudioEngine: ObservableObject {
         let engine = Unmanaged<AudioEngine>.fromOpaque(ptr).takeUnretainedValue()
         guard let fft = engine.fft else { return }
 
-        // For Float32 mono PCM each frame = 4 bytes.
-        let frameCount = Int(buffer.pointee.mAudioDataByteSize) / MemoryLayout<Float>.size
-        guard frameCount > 0 else { return }
-
+        let floatCount = Int(buffer.pointee.mAudioDataByteSize) / MemoryLayout<Float>.size
+        guard floatCount > 0 else { return }
         let samples = buffer.pointee.mAudioData.assumingMemoryBound(to: Float.self)
-        var q = fft.magnitudes(samples: samples, count: frameCount, targetHz: engine.targetHz)
-        engine.normaliser.normalise(&q)
-        DispatchQueue.main.async { engine.onQ?(q) }
+
+        if AudioEngine.stereo {
+            // De-interleave L/R, FFT each, normalise with one shared gain.
+            let frames = floatCount / 2
+            guard frames > 0 else { return }
+            var left  = [Float](repeating: 0, count: frames)
+            var right = [Float](repeating: 0, count: frames)
+            for i in 0..<frames { left[i] = samples[2*i]; right[i] = samples[2*i + 1] }
+            var qL = left.withUnsafeBufferPointer  { fft.magnitudes(samples: $0.baseAddress!, count: frames, targetHz: engine.targetHz) }
+            var qR = right.withUnsafeBufferPointer { fft.magnitudes(samples: $0.baseAddress!, count: frames, targetHz: engine.targetHz) }
+            engine.normaliser.normaliseStereo(&qL, &qR)
+            DispatchQueue.main.async { engine.onStereoQ?(qL, qR) }
+        } else {
+            var q = fft.magnitudes(samples: samples, count: floatCount, targetHz: engine.targetHz)
+            engine.normaliser.normalise(&q)
+            DispatchQueue.main.async { engine.onQ?(q) }
+        }
     }
 
     // MARK: - Core Audio helpers

@@ -17,6 +17,9 @@ struct WebViewContainer: NSViewRepresentable {
         audio.onQ = { [weak coord = context.coordinator] q in
             coord?.injectQ(q)
         }
+        audio.onStereoQ = { [weak coord = context.coordinator] l, r in
+            coord?.injectStereoQ(l, r)
+        }
 
         // Intercept key events at the app level so they always reach the
         // visualizer regardless of which view is first responder.
@@ -28,6 +31,9 @@ struct WebViewContainer: NSViewRepresentable {
     func updateNSView(_ nsView: WKWebView, context: Context) {
         audio.onQ = { [weak coord = context.coordinator] q in
             coord?.injectQ(q)
+        }
+        audio.onStereoQ = { [weak coord = context.coordinator] l, r in
+            coord?.injectStereoQ(l, r)
         }
     }
 
@@ -219,6 +225,15 @@ struct WebViewContainer: NSViewRepresentable {
             let arr = q.map { String(format: "%.5f", $0) }.joined(separator: ",")
             let js  = "if(typeof window._updateQ==='function')window._updateQ([\(arr)]);"
             wv.evaluateJavaScript(js, completionHandler: nil)
+        }
+
+        func injectStereoQ(_ l: [Float], _ r: [Float]) {
+            guard let wv = webView else { return }
+            let la = l.map { String(format: "%.5f", $0) }.joined(separator: ",")
+            let ra = r.map { String(format: "%.5f", $0) }.joined(separator: ",")
+            wv.evaluateJavaScript(
+                "if(typeof window._updateStereo==='function')window._updateStereo([\(la)],[\(ra)]);",
+                completionHandler: nil)
         }
 
         // MARK: WKNavigationDelegate
