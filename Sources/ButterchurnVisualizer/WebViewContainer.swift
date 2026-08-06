@@ -207,6 +207,7 @@ struct WebViewContainer: NSViewRepresentable {
                 case "0":  cmd = "reset"  // reset mix to defaults
                 case "x":  cmd = "reject" // cull the selected screen's preset for good
                 case "c":  cmd = "blend"  // cycle blend mode (Add, Screen, Difference, RGB split, …)
+                case "r":  cmd = "react"  // toggle low/mid/high ⇄ left/mid/right
                 case "f":  toggleFillScreen(); return   // same-Space fill (keeps rendering)
                 default:   return
                 }

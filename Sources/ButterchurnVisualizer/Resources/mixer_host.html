@@ -86,6 +86,7 @@
   </div>
   <div class="master">
     <button class="mx" id="autoBtn" data-act="auto">AUTO-MIX: ON</button>
+    <button class="mx" id="reactBtn" data-act="react">REACT: LOW/MID/HIGH</button>
     <button class="mx" id="blendBtn" data-act="blend">BLEND: ADD</button>
     <button class="mx" data-act="reset">RESET MIX</button>
     <button class="mx" data-act="hide">GRAPHICS ONLY ⤢</button>
@@ -167,8 +168,12 @@ const freqData = [ new Uint8Array(FBINS), new Uint8Array(FBINS), new Uint8Array(
 const timeData = new Uint8Array(FBINS); timeData.fill(128);
 const lastQ = new Float32Array(32);
 let stereoReactive = false;   // set true once stereo data arrives
-// Smoothed band energies per screen (0..~1).
-const band = [ {bass:0,mid:0,treb:0}, {bass:0,mid:0,treb:0}, {bass:0,mid:0,treb:0} ];
+// Smoothed band energies per screen (0..~1). `all` = overall channel energy.
+const band = [ {bass:0,mid:0,treb:0,all:0}, {bass:0,mid:0,treb:0,all:0}, {bass:0,mid:0,treb:0,all:0} ];
+
+// Reactivity mapping: 'bands' = low/mid/high per screen (from one mono/center
+// signal); 'stereo' = left/center/right per screen. Toggle live with R.
+let reactMode = 'bands';
 
 // Process one 32-bin channel into screen s: fills freqData[s] + band[s].
 function feedChannel(q, s) {
@@ -185,19 +190,21 @@ function feedChannel(q, s) {
   bd.bass = bd.bass * 0.8 + (lo / 8)  * 0.2;
   bd.mid  = bd.mid  * 0.8 + (md / 16) * 0.2;
   bd.treb = bd.treb * 0.8 + (hi / 8)  * 0.2;
+  bd.all  = bd.all  * 0.8 + ((lo + md + hi) / 32) * 0.2;
 }
 
-// Mono: every screen reacts to the same signal (unchanged behaviour).
+// Mono capture: every screen reacts to the same signal (low/mid/high weighting).
 function updateAudio(q) {
   for (let i = 0; i < 32; i++) lastQ[i] = q[i];
   feedChannel(q, 0); feedChannel(q, 1); feedChannel(q, 2);
 }
 
-// Stereo: screen 0 ← left, screen 1 ← center, screen 2 ← right.
+// Stereo capture: honour the live react mode.
 function updateStereo(l, r) {
   const c = new Array(32);
   for (let i = 0; i < 32; i++) { c[i] = (l[i] + r[i]) * 0.5; lastQ[i] = c[i]; }
-  feedChannel(l, 0); feedChannel(c, 1); feedChannel(r, 2);
+  if (reactMode === 'stereo') { feedChannel(l, 0); feedChannel(c, 1); feedChannel(r, 2); }
+  else                        { feedChannel(c, 0); feedChannel(c, 1); feedChannel(c, 2); }
 }
 
 // ── three independent visualizers ─────────────────────────────────────────────
@@ -344,7 +351,7 @@ const BLEND_NAMES = ['ADD','SUBTRACT','LIGHTEN','COLOR DODGE','COLOR BURN','HARD
 let blendMode = 0;
 gl.viewport(0, 0, OUT_W, OUT_H);
 
-function bandEnergy(s){ const bd = band[s]; const k = screen[s].band; return bd[k]; }
+function bandEnergy(s){ return reactMode === 'stereo' ? band[s].all : band[s][screen[s].band]; }
 function effectiveWeight(s){
   const base = screen[s].weight;
   if (!autoMix) return base;
@@ -401,6 +408,7 @@ const panels = [0,1,2].map(s => {
 });
 const autoBtn = $('autoBtn');
 const blendBtn = $('blendBtn');
+const reactBtn = $('reactBtn');
 
 function refreshHUD(){
   for (let s = 0; s < 3; s++){
@@ -414,6 +422,7 @@ function refreshHUD(){
   }
   autoBtn.textContent = 'AUTO-MIX: ' + (autoMix ? 'ON' : 'OFF');
   blendBtn.textContent = 'BLEND: ' + BLEND_NAMES[blendMode];
+  reactBtn.textContent = 'REACT: ' + (reactMode === 'stereo' ? 'L/MID/R' : 'LOW/MID/HIGH');
 }
 function tickHUD(){
   for (let s = 0; s < 3; s++)
@@ -485,6 +494,7 @@ window._keyCommand = function(cmd){
     case 'wdn':  screen[selected].weight = Math.max(0, screen[selected].weight - 0.1); refreshHUD(); break;
     case 'wup':  screen[selected].weight = Math.min(1.6, screen[selected].weight + 0.1); refreshHUD(); break;
     case 'auto': autoMix = !autoMix; refreshHUD(); break;
+    case 'react': reactMode = reactMode === 'bands' ? 'stereo' : 'bands'; refreshHUD(); showBar(); break; // R
     case 'blend':     blendMode = (blendMode + 1) % BLEND_NAMES.length; refreshHUD(); showBar(); break; // C
     case 'blendPrev': blendMode = (blendMode - 1 + BLEND_NAMES.length) % BLEND_NAMES.length; refreshHUD(); showBar(); break;
     case 'reset':resetMix(); break;
@@ -498,7 +508,7 @@ window._keyCommand = function(cmd){
 document.addEventListener('keydown', e => {
   const map = { '1':'1','2':'2','3':'3','n':'next','p':'prev','b':'cut','s':'sign',
                 '[':'wdn',']':'wup','m':'auto','0':'reset','x':'reject','c':'blend','C':'blendPrev',
-                ' ':'pause','h':'hud','ArrowRight':'next','ArrowLeft':'prev' };
+                'r':'react',' ':'pause','h':'hud','ArrowRight':'next','ArrowLeft':'prev' };
   const c = map[e.key]; if (c){ e.preventDefault(); window._keyCommand(c); }
 });
 
