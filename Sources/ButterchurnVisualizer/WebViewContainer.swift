@@ -206,6 +206,7 @@ struct WebViewContainer: NSViewRepresentable {
                 case "m":  cmd = "auto"   // toggle audio-reactive auto-mix
                 case "0":  cmd = "reset"  // reset mix to defaults
                 case "x":  cmd = "reject" // cull the selected screen's preset for good
+                case "c":  cmd = "blend"  // cycle blend mode (Add, Screen, Difference, RGB split, …)
                 case "f":  toggleFillScreen(); return   // same-Space fill (keeps rendering)
                 default:   return
                 }

@@ -86,11 +86,12 @@
   </div>
   <div class="master">
     <button class="mx" id="autoBtn" data-act="auto">AUTO-MIX: ON</button>
+    <button class="mx" id="blendBtn" data-act="blend">BLEND: ADD</button>
     <button class="mx" data-act="reset">RESET MIX</button>
     <button class="mx" data-act="hide">GRAPHICS ONLY ⤢</button>
   </div>
 </div>
-<div id="ginfo">Click ＋/− add/subtract · slider = weight · ◀ ▶ change preset · select a screen (1/2/3) then X = reject · H hides bar · F fill screen (keeps animating for OBS — don't use ⌃⌘F fullscreen)</div>
+<div id="ginfo">＋/− polarity · slider = weight · ◀ ▶ preset · C = blend mode · select screen (1/2/3) then X = reject · H hides bar · F fill screen (keeps animating for OBS — not ⌃⌘F)</div>
 
 <!-- Preset queue shim (PresetLoader may inject before the module runs) -->
 <script>
@@ -272,11 +273,41 @@ precision highp float;
 in vec2 uv; out vec4 o;
 uniform sampler2D t0, t1, t2;
 uniform vec3 sw;            // signed weights (signᵢ·weightᵢ)
+uniform int mode;           // blend mode 0..9
+const vec3 LUM = vec3(0.299, 0.587, 0.114);
+// Fold op for modes 2..7 (a = accumulated, b = next layer).
+vec3 fold(vec3 a, vec3 b){
+  if (mode == 2) return max(a, b);                                   // Lighten
+  if (mode == 3) return a / max(vec3(1.0) - b, 0.004);               // Color Dodge
+  if (mode == 4) return vec3(1.0) - (vec3(1.0) - a) / max(b, 0.004); // Color Burn
+  if (mode == 5) return mix(2.0*a*b, vec3(1.0) - 2.0*(vec3(1.0)-a)*(vec3(1.0)-b), step(vec3(0.5), b)); // Hard Light
+  if (mode == 6) return abs(a - b);                                  // Difference
+  if (mode == 7) return a + b - 2.0*a*b;                             // Exclusion
+  return a + b;
+}
 void main(){
-  vec3 c = texture(t0, uv).rgb * sw.x
-         + texture(t1, uv).rgb * sw.y
-         + texture(t2, uv).rgb * sw.z;
-  o = vec4(clamp(c, 0.0, 1.0), 1.0);
+  vec3 c0 = texture(t0, uv).rgb, c1 = texture(t1, uv).rgb, c2 = texture(t2, uv).rgb;
+  float w0 = sw.x, w1 = sw.y, w2 = sw.z;
+  vec3 r;
+  if (mode == 0) {                       // Add
+    r = c0*w0 + c1*w1 + c2*w2;
+  } else if (mode == 1) {                // Subtract (screen 1 base, others subtract)
+    r = c0*abs(w0) - c1*abs(w1) - c2*abs(w2);
+  } else if (mode == 8) {                // Alpha-over: 3 over 2 over 1
+    r = c0 * clamp(abs(w0), 0.0, 1.0);
+    r = mix(r, c1, clamp(abs(w1), 0.0, 1.0));
+    r = mix(r, c2, clamp(abs(w2), 0.0, 1.0));
+  } else if (mode == 9) {                // RGB split: each screen → one channel
+    r = vec3(dot(c0,LUM)*abs(w0), dot(c1,LUM)*abs(w1), dot(c2,LUM)*abs(w2));
+  } else {                               // fold modes 2..7: weight = layer opacity,
+    vec3 s0 = (w0 < 0.0 ? vec3(1.0)-c0 : c0);   // blend runs on full-range colors so
+    vec3 s1 = (w1 < 0.0 ? vec3(1.0)-c1 : c1);   // non-linear modes (burn/dodge/hard
+    vec3 s2 = (w2 < 0.0 ? vec3(1.0)-c2 : c2);   // light) don't crush to black
+    r = s0 * clamp(abs(w0), 0.0, 1.0);
+    r = mix(r, fold(r, s1), clamp(abs(w1), 0.0, 1.0));
+    r = mix(r, fold(r, s2), clamp(abs(w2), 0.0, 1.0));
+  }
+  o = vec4(clamp(r, 0.0, 1.0), 1.0);
 }`;
 function compile(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
   if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
@@ -308,6 +339,9 @@ gl.uniform1i(gl.getUniformLocation(prog, 't0'), 0);
 gl.uniform1i(gl.getUniformLocation(prog, 't1'), 1);
 gl.uniform1i(gl.getUniformLocation(prog, 't2'), 2);
 const swLoc = gl.getUniformLocation(prog, 'sw');
+const modeLoc = gl.getUniformLocation(prog, 'mode');
+const BLEND_NAMES = ['ADD','SUBTRACT','LIGHTEN','COLOR DODGE','COLOR BURN','HARD LIGHT','DIFFERENCE','EXCLUSION','ALPHA-OVER','RGB SPLIT'];
+let blendMode = 0;
 gl.viewport(0, 0, OUT_W, OUT_H);
 
 function bandEnergy(s){ const bd = band[s]; const k = screen[s].band; return bd[k]; }
@@ -332,6 +366,7 @@ function composeOnce(){
     screen[0].sign * effectiveWeight(0),
     screen[1].sign * effectiveWeight(1),
     screen[2].sign * effectiveWeight(2));
+  gl.uniform1i(modeLoc, blendMode);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
@@ -365,6 +400,7 @@ const panels = [0,1,2].map(s => {
            wt: el.querySelector('.wt'), wv: el.querySelector('.wv'), mfill: el.querySelector('.mfill') };
 });
 const autoBtn = $('autoBtn');
+const blendBtn = $('blendBtn');
 
 function refreshHUD(){
   for (let s = 0; s < 3; s++){
@@ -377,6 +413,7 @@ function refreshHUD(){
     p.wv.textContent = screen[s].weight.toFixed(2);
   }
   autoBtn.textContent = 'AUTO-MIX: ' + (autoMix ? 'ON' : 'OFF');
+  blendBtn.textContent = 'BLEND: ' + BLEND_NAMES[blendMode];
 }
 function tickHUD(){
   for (let s = 0; s < 3; s++)
@@ -448,6 +485,8 @@ window._keyCommand = function(cmd){
     case 'wdn':  screen[selected].weight = Math.max(0, screen[selected].weight - 0.1); refreshHUD(); break;
     case 'wup':  screen[selected].weight = Math.min(1.6, screen[selected].weight + 0.1); refreshHUD(); break;
     case 'auto': autoMix = !autoMix; refreshHUD(); break;
+    case 'blend':     blendMode = (blendMode + 1) % BLEND_NAMES.length; refreshHUD(); showBar(); break; // C
+    case 'blendPrev': blendMode = (blendMode - 1 + BLEND_NAMES.length) % BLEND_NAMES.length; refreshHUD(); showBar(); break;
     case 'reset':resetMix(); break;
     case 'reject': rejectCurrent(); break;      // X = cull the selected screen's preset for good
     case 'pause':paused = !paused; break;
@@ -458,8 +497,8 @@ window._keyCommand = function(cmd){
 // Local keyboard fallback (when the WebView itself has focus).
 document.addEventListener('keydown', e => {
   const map = { '1':'1','2':'2','3':'3','n':'next','p':'prev','b':'cut','s':'sign',
-                '[':'wdn',']':'wup','m':'auto','0':'reset','x':'reject',' ':'pause','h':'hud',
-                'ArrowRight':'next','ArrowLeft':'prev' };
+                '[':'wdn',']':'wup','m':'auto','0':'reset','x':'reject','c':'blend','C':'blendPrev',
+                ' ':'pause','h':'hud','ArrowRight':'next','ArrowLeft':'prev' };
   const c = map[e.key]; if (c){ e.preventDefault(); window._keyCommand(c); }
 });
 
