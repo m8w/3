@@ -32,9 +32,10 @@ final class AudioEngine: ObservableObject {
     // available input so you can copy the right one.
     static let inputDeviceName = ProcessInfo.processInfo.environment["AUDIO_DEVICE"] ?? "BlackHole 2ch"
 
-    // Stereo-reactive mode: capture L/R separately and drive the 3 screens with
-    // left / center / right. Off by default (mono, unchanged). STEREO_REACTIVE=1.
-    static let stereo = ProcessInfo.processInfo.environment["STEREO_REACTIVE"] == "1"
+    // Capture L/R separately so the mixer can switch live between low/mid/high
+    // (center) and left/center/right. On by default so the R toggle always does
+    // something; set MONO_AUDIO=1 to force single-channel capture.
+    static let stereo = ProcessInfo.processInfo.environment["MONO_AUDIO"] != "1"
 
     private var audioQueue: AudioQueueRef?
     private var fft:        MicrotonalFFT?
