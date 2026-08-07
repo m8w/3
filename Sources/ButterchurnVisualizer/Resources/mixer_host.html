@@ -165,23 +165,32 @@ function patchPreset(base) {
 // Only standalone float literals are jittered (numbers with a decimal point,
 // never those embedded in identifiers like a.q29), so syntax can't break.
 let mutateAmt = 0, mutateLevel = 0;
-const MUTATE_AMTS = [0, 0.15, 0.35], MUTATE_NAMES = ['OFF','SUBTLE','WILD'];
+const MUTATE_AMTS = [0, 0.12, 0.25], MUTATE_NAMES = ['OFF','SUBTLE','WILD'];
 const MUT_SKIP = new Set(['rating']);
 function jitNum(v, a){ return v * (1 + (Math.random()*2 - 1) * a); }
 function jitFloats(code, a){
-  return code.replace(/(?<![\w.])(\d*\.\d+|\d+\.\d*)(?![\w.])/g,
-    m => (parseFloat(m) * (1 + (Math.random()*2 - 1) * a)).toFixed(5));
+  return code.replace(/(?<![\w.])(\d*\.\d+|\d+\.\d*)(?![\w.])/g, m => {
+    const v = parseFloat(m) * (1 + (Math.random()*2 - 1) * a);
+    return Number.isFinite(v) ? v.toFixed(5) : m;
+  });
 }
 function mutatePreset(src, a){
   const p = JSON.parse(JSON.stringify(src));
   const bv = p.baseVals;
-  if (bv) for (const k in bv){
-    const v = bv[k];
-    if (typeof v === 'number' && !Number.isInteger(v) && !MUT_SKIP.has(k)) bv[k] = jitNum(v, a);
+  if (bv) {
+    for (const k in bv){
+      const v = bv[k];
+      if (typeof v === 'number' && !Number.isInteger(v) && !MUT_SKIP.has(k)){
+        const nv = jitNum(v, a);
+        bv[k] = Number.isFinite(nv) ? nv : v;     // never introduce NaN/∞
+      }
+    }
+    if (typeof bv.decay    === 'number') bv.decay    = Math.min(1,   Math.max(0,   bv.decay));
+    if (typeof bv.gammaadj === 'number') bv.gammaadj = Math.min(8,   Math.max(0.1, bv.gammaadj));
+    if (typeof bv.zoom     === 'number') bv.zoom     = Math.min(8,   Math.max(0.1, bv.zoom));
   }
-  if (bv && typeof bv.decay === 'number') bv.decay = Math.min(1, Math.max(0, bv.decay));
   for (const k of ['init_eqs_str','frame_eqs_str','pixel_eqs_str'])
-    if (typeof p[k] === 'string') p[k] = jitFloats(p[k], a);
+    if (typeof p[k] === 'string') p[k] = jitFloats(p[k], a * 0.6);   // gentler on equations
   return p;
 }
 function maybeMutate(base){ return mutateAmt > 0 ? mutatePreset(base, mutateAmt) : base; }
@@ -388,8 +397,23 @@ function effectiveWeight(s){
 }
 
 // ── render loop: render all three, upload, composite — all in one rAF turn ────
+let renderErr = [0, 0, 0];   // consecutive render errors per screen
 function composeOnce(){
-  for (let s = 0; s < 3; s++) viz[s].render({ frequencyData: freqData[s], timeByteData: timeData });
+  for (let s = 0; s < 3; s++) {
+    try {
+      viz[s].render({ frequencyData: freqData[s], timeByteData: timeData });
+      renderErr[s] = 0;
+    } catch (e) {
+      // A bad preset/mutation threw — recover this screen without freezing the
+      // whole loop. Reload its current preset UNMUTATED; if it keeps failing,
+      // move on to a different preset.
+      if (++renderErr[s] <= 2 && screen[s].idx >= 0) {
+        try { viz[s].loadPreset(patchPreset(allPresets[names[screen[s].idx]]), 0); } catch(_) {}
+      } else {
+        renderErr[s] = 0; stepOn(s, +1, 0);
+      }
+    }
+  }
   for (let s = 0; s < 3; s++) {
     gl.activeTexture(gl.TEXTURE0 + s);
     gl.bindTexture(gl.TEXTURE_2D, tex[s]);
