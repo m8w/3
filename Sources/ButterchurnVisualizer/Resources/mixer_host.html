@@ -88,11 +88,12 @@
     <button class="mx" id="autoBtn" data-act="auto">AUTO-MIX: ON</button>
     <button class="mx" id="reactBtn" data-act="react">REACT: LOW/MID/HIGH</button>
     <button class="mx" id="blendBtn" data-act="blend">BLEND: ADD</button>
+    <button class="mx" id="mutateBtn" data-act="mutate">MUTATE: OFF</button>
     <button class="mx" data-act="reset">RESET MIX</button>
     <button class="mx" data-act="hide">GRAPHICS ONLY ⤢</button>
   </div>
 </div>
-<div id="ginfo">＋/− polarity · slider = weight · ◀ ▶ preset · C = blend mode · select screen (1/2/3) then X = reject · H hides bar · F fill screen (keeps animating for OBS — not ⌃⌘F)</div>
+<div id="ginfo">＋/− polarity · weight slider · ◀▶ preset · C blend · R react (freq⇄stereo) · G mutate · 1/2/3 then X reject · H hide bar · F fill screen (not ⌃⌘F)</div>
 
 <!-- Preset queue shim (PresetLoader may inject before the module runs) -->
 <script>
@@ -159,6 +160,31 @@ function patchPreset(base) {
   const { init_eqs_str, frame_eqs_str, pixel_eqs_str, ...rest } = base;
   return { ...rest, per_frame_eqs_eel: PER_FRAME, per_pixel_eqs_eel: PER_PIXEL };
 }
+
+// ── preset mutation: perturb params + equation constants for fresh looks ──────
+// Only standalone float literals are jittered (numbers with a decimal point,
+// never those embedded in identifiers like a.q29), so syntax can't break.
+let mutateAmt = 0, mutateLevel = 0;
+const MUTATE_AMTS = [0, 0.15, 0.35], MUTATE_NAMES = ['OFF','SUBTLE','WILD'];
+const MUT_SKIP = new Set(['rating']);
+function jitNum(v, a){ return v * (1 + (Math.random()*2 - 1) * a); }
+function jitFloats(code, a){
+  return code.replace(/(?<![\w.])(\d*\.\d+|\d+\.\d*)(?![\w.])/g,
+    m => (parseFloat(m) * (1 + (Math.random()*2 - 1) * a)).toFixed(5));
+}
+function mutatePreset(src, a){
+  const p = JSON.parse(JSON.stringify(src));
+  const bv = p.baseVals;
+  if (bv) for (const k in bv){
+    const v = bv[k];
+    if (typeof v === 'number' && !Number.isInteger(v) && !MUT_SKIP.has(k)) bv[k] = jitNum(v, a);
+  }
+  if (bv && typeof bv.decay === 'number') bv.decay = Math.min(1, Math.max(0, bv.decay));
+  for (const k of ['init_eqs_str','frame_eqs_str','pixel_eqs_str'])
+    if (typeof p[k] === 'string') p[k] = jitFloats(p[k], a);
+  return p;
+}
+function maybeMutate(base){ return mutateAmt > 0 ? mutatePreset(base, mutateAmt) : base; }
 
 // ── audio: shared 32-bin → 1024-bin frequency + waveform buffers ──────────────
 const FBINS = 1024;
@@ -230,7 +256,7 @@ function loadOn(s, blend) {
   for (let i = 0; i < n; i++) {
     const idx = (start + i) % n;
     if (rejected.has(names[idx])) continue;
-    try { viz[s].loadPreset(patchPreset(allPresets[names[idx]]), blend); screen[s].idx = idx; return true; }
+    try { viz[s].loadPreset(patchPreset(maybeMutate(allPresets[names[idx]])), blend); screen[s].idx = idx; return true; }
     catch(e) { /* try next */ }
   }
   return false;
@@ -242,7 +268,7 @@ function stepOn(s, dir, blend) {
   for (let i = 0; i < n; i++) {
     const idx = (start + dir*i + n*1000) % n;
     if (rejected.has(names[idx])) continue;
-    try { viz[s].loadPreset(patchPreset(allPresets[names[idx]]), blend); screen[s].idx = idx; refreshHUD(); return; }
+    try { viz[s].loadPreset(patchPreset(maybeMutate(allPresets[names[idx]])), blend); screen[s].idx = idx; refreshHUD(); return; }
     catch(e) {}
   }
 }
@@ -409,6 +435,7 @@ const panels = [0,1,2].map(s => {
 const autoBtn = $('autoBtn');
 const blendBtn = $('blendBtn');
 const reactBtn = $('reactBtn');
+const mutateBtn = $('mutateBtn');
 
 function refreshHUD(){
   for (let s = 0; s < 3; s++){
@@ -423,6 +450,7 @@ function refreshHUD(){
   autoBtn.textContent = 'AUTO-MIX: ' + (autoMix ? 'ON' : 'OFF');
   blendBtn.textContent = 'BLEND: ' + BLEND_NAMES[blendMode];
   reactBtn.textContent = 'REACT: ' + (reactMode === 'stereo' ? 'L/MID/R' : 'LOW/MID/HIGH');
+  mutateBtn.textContent = 'MUTATE: ' + MUTATE_NAMES[mutateLevel];
 }
 function tickHUD(){
   for (let s = 0; s < 3; s++)
@@ -495,6 +523,10 @@ window._keyCommand = function(cmd){
     case 'wup':  screen[selected].weight = Math.min(1.6, screen[selected].weight + 0.1); refreshHUD(); break;
     case 'auto': autoMix = !autoMix; refreshHUD(); break;
     case 'react': reactMode = reactMode === 'bands' ? 'stereo' : 'bands'; refreshHUD(); showBar(); break; // R
+    case 'mutate': // G — cycle mutation intensity and re-roll all screens with a fresh variation
+      mutateLevel = (mutateLevel + 1) % MUTATE_AMTS.length; mutateAmt = MUTATE_AMTS[mutateLevel];
+      for (let s = 0; s < 3; s++) if (screen[s].idx >= 0) stepOn(s, 0, 1.5);
+      refreshHUD(); showBar(); break;
     case 'blend':     blendMode = (blendMode + 1) % BLEND_NAMES.length; refreshHUD(); showBar(); break; // C
     case 'blendPrev': blendMode = (blendMode - 1 + BLEND_NAMES.length) % BLEND_NAMES.length; refreshHUD(); showBar(); break;
     case 'reset':resetMix(); break;
@@ -508,7 +540,7 @@ window._keyCommand = function(cmd){
 document.addEventListener('keydown', e => {
   const map = { '1':'1','2':'2','3':'3','n':'next','p':'prev','b':'cut','s':'sign',
                 '[':'wdn',']':'wup','m':'auto','0':'reset','x':'reject','c':'blend','C':'blendPrev',
-                'r':'react',' ':'pause','h':'hud','ArrowRight':'next','ArrowLeft':'prev' };
+                'r':'react','g':'mutate',' ':'pause','h':'hud','ArrowRight':'next','ArrowLeft':'prev' };
   const c = map[e.key]; if (c){ e.preventDefault(); window._keyCommand(c); }
 });
 
