@@ -309,6 +309,20 @@ final class Curator: NSObject, ObservableObject, WKNavigationDelegate, WKScriptM
             }
             processed = seen.count
         }
+        // CURATE_EXCLUDE=dir1:dir2 → seed `seen` with those batches' hashes so a
+        // new batch never reuses presets already in them (guaranteed all-different).
+        if let excl = ProcessInfo.processInfo.environment["CURATE_EXCLUDE"], !excl.isEmpty {
+            var excluded = 0
+            for dir in excl.split(separator: ":") {
+                let mf = URL(fileURLWithPath: (String(dir) as NSString).expandingTildeInPath)
+                    .appendingPathComponent("_manifest.tsv")
+                guard let d = try? String(contentsOf: mf, encoding: .utf8) else { continue }
+                for line in d.split(separator: "\n") {
+                    if let h = line.split(separator: "\t").first { if seen.insert(String(h)).inserted { excluded += 1 } }
+                }
+            }
+            if excluded > 0 { print("[Curator] excluding \(excluded) preset(s) from other batches") }
+        }
         // Real keeper count = the .json files actually on disk (the manifest can be
         // polluted by past overlapping runs, so don't trust its keep lines).
         if let outs = try? FileManager.default.contentsOfDirectory(at: outputDir, includingPropertiesForKeys: nil) {

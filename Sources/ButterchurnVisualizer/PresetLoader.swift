@@ -191,10 +191,20 @@ final class PresetLoader {
 
     /// Walk the entire Resources bundle tree and return URLs of every .json and .milk file.
     private static func findPresetURLs() -> [URL] {
-        guard let resourceURL = Bundle.module.resourceURL else { return [] }
+        // PRESETS_ONLY=/path → load ONLY that folder (isolated batch review),
+        // ignoring the bundled presets entirely. Otherwise load the whole bundle.
+        let root: URL
+        if let only = ProcessInfo.processInfo.environment["PRESETS_ONLY"], !only.isEmpty {
+            root = URL(fileURLWithPath: (only as NSString).expandingTildeInPath)
+            print("[PresetLoader] PRESETS_ONLY — loading only \(root.path)")
+        } else if let resourceURL = Bundle.module.resourceURL {
+            root = resourceURL
+        } else {
+            return []
+        }
 
         guard let enumerator = FileManager.default.enumerator(
-            at: resourceURL,
+            at: root,
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
