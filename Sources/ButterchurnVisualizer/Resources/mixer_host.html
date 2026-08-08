@@ -155,10 +155,12 @@ function patchPreset(base) {
     const pfKey   = 'perFrameEQs' in base ? 'perFrameEQs' : 'per_frame_eqs_eel';
     const ppKey   = 'perPixelEQs' in base ? 'perPixelEQs' : 'per_pixel_eqs_eel';
     const initKey = 'initEQs'     in base ? 'initEQs'     : 'init_eqs_eel';
-    return { ...base, [initKey]:(base[initKey]||'')+PF_INIT, [pfKey]:pfEEL+PER_FRAME, [ppKey]:ppEEL+PER_PIXEL };
+    return { ...base, [initKey]:(base[initKey]||'')+PF_INIT+midiEELinit(),
+             [pfKey]:pfEEL+PER_FRAME+midiEELframe(), [ppKey]:ppEEL+PER_PIXEL };
   }
   const { init_eqs_str, frame_eqs_str, pixel_eqs_str, ...rest } = base;
-  return { ...rest, per_frame_eqs_eel: PER_FRAME, per_pixel_eqs_eel: PER_PIXEL };
+  return { ...rest, init_eqs_eel: PF_INIT+midiEELinit(),
+           per_frame_eqs_eel: PER_FRAME+midiEELframe(), per_pixel_eqs_eel: PER_PIXEL };
 }
 
 // ── preset mutation: perturb params + equation constants for fresh looks ──────
@@ -316,6 +318,9 @@ in vec2 uv; out vec4 o;
 uniform sampler2D t0, t1, t2;
 uniform vec3 sw;            // signed weights (signᵢ·weightᵢ)
 uniform int mode;           // blend mode 0..9
+uniform float uRot;         // whole-composite rotation (radians) — MIDI pitch-bend + song osc
+uniform float uScale;       // whole-composite zoom — MIDI cutoff arc breathing
+uniform float uGamma;       // output gamma — MIDI hardness arc
 const vec3 LUM = vec3(0.299, 0.587, 0.114);
 // Fold op for modes 2..7 (a = accumulated, b = next layer).
 vec3 fold(vec3 a, vec3 b){
@@ -328,7 +333,13 @@ vec3 fold(vec3 a, vec3 b){
   return a + b;
 }
 void main(){
-  vec3 c0 = texture(t0, uv).rgb, c1 = texture(t1, uv).rgb, c2 = texture(t2, uv).rgb;
+  // Whole-composite transform driven by the SN2 song oscillators: rotate + zoom
+  // about the centre. uScale is biased ≥1 so the frame stays covered when rotated.
+  vec2 cen = uv - 0.5;
+  float sn = sin(uRot), cs = cos(uRot);
+  cen = mat2(cs, -sn, sn, cs) * cen / max(uScale, 0.05);
+  vec2 uvr = cen + 0.5;
+  vec3 c0 = texture(t0, uvr).rgb, c1 = texture(t1, uvr).rgb, c2 = texture(t2, uvr).rgb;
   float w0 = sw.x, w1 = sw.y, w2 = sw.z;
   vec3 r;
   if (mode == 0) {                       // Add
@@ -349,7 +360,7 @@ void main(){
     r = mix(r, fold(r, s1), clamp(abs(w1), 0.0, 1.0));
     r = mix(r, fold(r, s2), clamp(abs(w2), 0.0, 1.0));
   }
-  o = vec4(clamp(r, 0.0, 1.0), 1.0);
+  o = vec4(pow(clamp(r, 0.0, 1.0), vec3(uGamma)), 1.0);
 }`;
 function compile(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
   if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
@@ -382,30 +393,105 @@ gl.uniform1i(gl.getUniformLocation(prog, 't1'), 1);
 gl.uniform1i(gl.getUniformLocation(prog, 't2'), 2);
 const swLoc = gl.getUniformLocation(prog, 'sw');
 const modeLoc = gl.getUniformLocation(prog, 'mode');
+const rotLoc = gl.getUniformLocation(prog, 'uRot');
+const scaleLoc = gl.getUniformLocation(prog, 'uScale');
+const gammaLoc = gl.getUniformLocation(prog, 'uGamma');
 const BLEND_NAMES = ['ADD','SUBTRACT','LIGHTEN','COLOR DODGE','COLOR BURN','HARD LIGHT','DIFFERENCE','EXCLUSION','ALPHA-OVER','RGB SPLIT'];
 let blendMode = 0;
 gl.viewport(0, 0, OUT_W, OUT_H);
 
-// ── MIDI reactivity (opt-in; MidiEngine feeds this via _updateMIDI) ────────────
-let midi = null, _midiHits = 0, midiPulse = 0;
-window._updateMIDI = m => {
-  const first = !midi;
-  midi = m;
-  if (typeof m.hits === 'number') { if (m.hits > _midiHits) midiPulse = Math.min(1.5, midiPulse + 0.5); _midiHits = m.hits; }
-  if (first && m.connected) log('MIDI connected — reacting to the SN2 stream');
+// ── MIDI reactivity + ch-16-anchored oscillators ──────────────────────────────
+// The SN2 rig sends no MIDI clock; its ch-16 Program Change is the sync anchor
+// (t≡0) and every sound-design modulator is a slow sine whose period is a
+// multiple of the 17:17 song unit (1037s). We reconstruct that same sine family
+// here from the anchor so the visuals breathe on the identical 17:17 arcs, and
+// fold the live CC arcs (channel 0, the reference phase) in on top.
+const SONG_UNIT = 1037;                 // 17:17 in seconds — matches sn2_chaos8_runs.py
+const TAU = Math.PI * 2;
+// period multiples + param phases, copied verbatim from the sn2 script
+const OSC_DEF = {
+  cutoff:   { mult: 2.25, phase: Math.PI * 0.8 },
+  hardness: { mult: 1.75, phase: Math.PI * 0.4 },
+  resonance:{ mult: 2.75, phase: Math.PI * 1.2 },
+  sync:     { mult: 3.25, phase: Math.PI * 1.6 },
+  pitch:    { mult: 1.25, phase: 0.0 },
 };
+function osc01(name){ const d = OSC_DEF[name]; return (Math.sin(TAU * songTime / (SONG_UNIT * d.mult) + d.phase) + 1) * 0.5; }
+
+let midi = null, _midiHits = 0, midiPulse = 0;
+let anchorIndex = -1, lastProgram = -999, songTime = 0;
+const _t0 = performance.now();
+// Smoothed live CC arcs (0..1) — the actual synth values, slewed to 60fps.
+const M = { on:false, cut:0.5, reso:0.3, hard:0.4, sync:0.5, mod:0, bend:0 };
+
+window._updateMIDI = m => {
+  const first = !midi; midi = m;
+  M.on = !!m.connected;
+  if (typeof m.hits === 'number') { if (m.hits > _midiHits) midiPulse = Math.min(1.5, midiPulse + 0.5); _midiHits = m.hits; }
+  // A ch-16 Program Change = a new Performance = a 17:17 downbeat. Count anchors
+  // so the reconstructed song clock stays locked to the pulse, drift-free.
+  if (typeof m.program === 'number' && m.program >= 0 && m.program !== lastProgram) {
+    lastProgram = m.program; anchorIndex++; onSongDownbeat();
+  }
+  if (typeof m.beat === 'number' && m.beat >= 0 && anchorIndex >= 0)
+    songTime = anchorIndex * SONG_UNIT + m.beat;
+  if (first && m.connected) log('MIDI connected — locking visuals to the SN2 17:17 arcs');
+};
+
+// New Performance landed: turn the whole mix over in step + a structural change.
+function onSongDownbeat(){
+  midiPulse = Math.min(1.6, midiPulse + 0.9);
+  if (anchorIndex <= 0) return;                       // skip the startup anchor
+  if (names.length) for (let s = 0; s < 3; s++) loadOn(s, 3.0);
+  blendMode = (blendMode + 1) % BLEND_NAMES.length;
+  refreshHUD();
+}
+// Before any anchor arrives, free-run the clock so the oscillators still move.
+function tickSongClock(){ if (anchorIndex < 0) songTime = (performance.now() - _t0) / 1000; }
+// Slew the smoothed live arcs toward the latest MIDI CCs each frame.
+function updateMidiSmooth(){
+  if (!midi || !midi.connected) return;
+  const k = 0.05;
+  M.cut  += ((midi.cutoff ?? 0.5) - M.cut ) * k;
+  M.reso += ((midi.reso   ?? 0.3) - M.reso) * k;
+  M.hard += ((midi.hard   ?? 0.4) - M.hard) * k;
+  M.sync += ((midi.sync   ?? 0.5) - M.sync) * k;
+  M.mod  += ((midi.mod    ?? 0.0) - M.mod ) * k;
+  M.bend += ((midi.bend   ?? 0.0) - M.bend) * k;
+}
 // Extra energy the MIDI stream contributes: note pulses + mod wheel + note count.
 function midiEnergy(){
   if (!midi || !midi.connected) return 0;
-  return Math.min(1.5, midiPulse + (midi.mod || 0) * 0.4 + Math.min(0.5, (midi.notes || 0) * 0.08));
+  return Math.min(1.5, midiPulse + (M.mod || 0) * 0.4 + Math.min(0.5, (midi.notes || 0) * 0.08));
+}
+// Composite-level drivers (smooth, 60fps). Live arcs give the true synced motion;
+// a touch of reconstructed pitch osc adds organic life.
+function midiRot(){   return M.on ? (M.bend * 0.14 + (osc01('pitch') - 0.5) * 0.08) : 0; }
+function midiScale(){ return M.on ? (1.02 + (M.cut - 0.5) * 0.10) : 1.0; }
+function midiGamma(){ return M.on ? Math.max(0.5, Math.min(1.8, 1.0 + (M.hard - 0.4) * 0.5)) : 1.0; }
+
+// Baked EEL so the milkdrop equations themselves read the MIDI arcs. Refreshed on
+// every preset (re)load (~30s), which re-syncs the slow 17:17 arcs each time.
+function midiEELinit(){
+  if (!M.on) return '';
+  return 'm_cut=' + M.cut.toFixed(4) + ';m_reso=' + M.reso.toFixed(4) +
+         ';m_hard=' + M.hard.toFixed(4) + ';m_bend=' + M.bend.toFixed(4) + ';';
+}
+function midiEELframe(){
+  if (!M.on) return '';
+  const wC = (TAU / (SONG_UNIT * OSC_DEF.cutoff.mult)).toFixed(8);   // rad/s, the 17:17 cadence
+  return 'zoom=zoom+(m_cut-0.5)*0.05;warp=warp+m_reso*0.28;' +
+         'rot=rot+m_bend*0.015+sin(' + wC + '*time)*0.008;decay=decay-(m_hard-0.4)*0.010;';
 }
 
 function bandEnergy(s){ return reactMode === 'stereo' ? band[s].all : band[s][screen[s].band]; }
 function effectiveWeight(s){
   const base = screen[s].weight;
   if (!autoMix) return base;
-  // Audio band (its own channel in stereo mode) + any MIDI energy.
-  const e = Math.min(1.4, (bandEnergy(s) + midiEnergy() * 0.6) * 1.6);
+  let e = Math.min(1.4, (bandEnergy(s) + midiEnergy() * 0.6) * 1.6);
+  // The resonance/sync arcs gently emphasise the mix across the song (screen 2
+  // swells on the sync crest, the flanks fall — a slow, locked breathing).
+  if (M.on) e *= 1 + (M.reso - 0.3) * 0.25 + (M.sync - 0.5) * 0.20 * (s === 1 ? 1 : -0.5);
   return Math.max(0, Math.min(1.6, base * (0.45 + 0.95 * e)));
 }
 
@@ -413,6 +499,8 @@ function effectiveWeight(s){
 let renderErr = [0, 0, 0];   // consecutive render errors per screen
 function composeOnce(){
   midiPulse *= 0.90;   // note pulses decay each frame
+  tickSongClock();     // advance the 17:17 song clock + smooth the live MIDI arcs
+  updateMidiSmooth();
   for (let s = 0; s < 3; s++) {
     try {
       viz[s].render({ frequencyData: freqData[s], timeByteData: timeData });
@@ -438,6 +526,9 @@ function composeOnce(){
     screen[1].sign * effectiveWeight(1),
     screen[2].sign * effectiveWeight(2));
   gl.uniform1i(modeLoc, blendMode);
+  gl.uniform1f(rotLoc, midiRot());
+  gl.uniform1f(scaleLoc, midiScale());
+  gl.uniform1f(gammaLoc, midiGamma());
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 

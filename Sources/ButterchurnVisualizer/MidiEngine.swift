@@ -113,9 +113,13 @@ final class MidiEngine {
 
     private func emit() {
         lock.lock()
-        func avg(_ c: Int) -> Double { var s = 0.0; for ch in 0..<8 { s += Double(cc[ch][c]) }; return s / 8 / 127 }
-        let cutoff = avg(74), reso = avg(71), hard = avg(83), sync = avg(19), mod = avg(1)
-        var b = 0.0; for ch in 0..<8 { b += bend[ch] }; b /= 8
+        // The sn2 rig sends each sound-design modulator on all 8 channels,
+        // phase-offset by ch·π/4. Averaging those 8 equal-frequency sines cancels
+        // them to a flat 0.5 — useless as an arc. Channel 0 carries the reference
+        // phase (CHANNEL_PHASE[0]=0), so it IS the clean modulator sine we want.
+        func v(_ c: Int) -> Double { Double(cc[0][c]) / 127 }
+        let cutoff = v(74), reso = v(71), hard = v(83), sync = v(19), mod = v(1)
+        let b = bend[0]
         let notes = active.count, note = lastNote, vel = lastVel, hitCount = hits
         let anch = anchor, prog = program, conn = connected
         lock.unlock()
