@@ -74,11 +74,11 @@ final class MidiEngine {
     private static let readProc: MIDIReadProc = { pktList, refCon, _ in
         guard let refCon = refCon else { return }
         let engine = Unmanaged<MidiEngine>.fromOpaque(refCon).takeUnretainedValue()
-        var pkt = pktList.pointee.packet
-        for _ in 0..<pktList.pointee.numPackets {
-            let len = Int(pkt.length)
-            withUnsafeBytes(of: pkt.data) { buf in engine.parse(buf, len) }
-            pkt = MIDIPacketNext(&pkt).pointee
+        // unsafeSequence() walks the real list memory correctly (a copied packet
+        // would make MIDIPacketNext read garbage on multi-packet bursts).
+        for packet in pktList.unsafeSequence() {
+            let len = Int(packet.pointee.length)
+            withUnsafeBytes(of: packet.pointee.data) { buf in engine.parse(buf, len) }
         }
     }
 
