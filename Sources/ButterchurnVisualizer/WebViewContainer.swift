@@ -14,6 +14,8 @@ struct WebViewContainer: NSViewRepresentable {
         context.coordinator.webView = webView
         loadHost(into: webView)
 
+        if MidiEngine.enabled { context.coordinator.startMIDI() }
+
         audio.onQ = { [weak coord = context.coordinator] q in
             coord?.injectQ(q)
         }
@@ -228,6 +230,22 @@ struct WebViewContainer: NSViewRepresentable {
             let arr = q.map { String(format: "%.5f", $0) }.joined(separator: ",")
             let js  = "if(typeof window._updateQ==='function')window._updateQ([\(arr)]);"
             wv.evaluateJavaScript(js, completionHandler: nil)
+        }
+
+        private var midi: MidiEngine?
+        func startMIDI() {
+            guard midi == nil else { return }
+            let m = MidiEngine()
+            m.onUpdate = { [weak self] state in self?.injectMIDI(state) }
+            m.start()
+            midi = m
+        }
+        func injectMIDI(_ state: [String: Any]) {
+            guard let wv = webView,
+                  let data = try? JSONSerialization.data(withJSONObject: state),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            wv.evaluateJavaScript("if(typeof window._updateMIDI==='function')window._updateMIDI(\(json));",
+                                  completionHandler: nil)
         }
 
         func injectStereoQ(_ l: [Float], _ r: [Float]) {

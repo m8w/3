@@ -386,19 +386,33 @@ const BLEND_NAMES = ['ADD','SUBTRACT','LIGHTEN','COLOR DODGE','COLOR BURN','HARD
 let blendMode = 0;
 gl.viewport(0, 0, OUT_W, OUT_H);
 
+// ── MIDI reactivity (opt-in; MidiEngine feeds this via _updateMIDI) ────────────
+let midi = null, _midiHits = 0, midiPulse = 0;
+window._updateMIDI = m => {
+  const first = !midi;
+  midi = m;
+  if (typeof m.hits === 'number') { if (m.hits > _midiHits) midiPulse = Math.min(1.5, midiPulse + 0.5); _midiHits = m.hits; }
+  if (first && m.connected) log('MIDI connected — reacting to the SN2 stream');
+};
+// Extra energy the MIDI stream contributes: note pulses + mod wheel + note count.
+function midiEnergy(){
+  if (!midi || !midi.connected) return 0;
+  return Math.min(1.5, midiPulse + (midi.mod || 0) * 0.4 + Math.min(0.5, (midi.notes || 0) * 0.08));
+}
+
 function bandEnergy(s){ return reactMode === 'stereo' ? band[s].all : band[s][screen[s].band]; }
 function effectiveWeight(s){
   const base = screen[s].weight;
   if (!autoMix) return base;
-  // Modulate the manual base around this screen's audio band (its own channel
-  // in stereo mode).
-  const e = Math.min(1.2, bandEnergy(s) * 1.6);
+  // Audio band (its own channel in stereo mode) + any MIDI energy.
+  const e = Math.min(1.4, (bandEnergy(s) + midiEnergy() * 0.6) * 1.6);
   return Math.max(0, Math.min(1.6, base * (0.45 + 0.95 * e)));
 }
 
 // ── render loop: render all three, upload, composite — all in one rAF turn ────
 let renderErr = [0, 0, 0];   // consecutive render errors per screen
 function composeOnce(){
+  midiPulse *= 0.90;   // note pulses decay each frame
   for (let s = 0; s < 3; s++) {
     try {
       viz[s].render({ frequencyData: freqData[s], timeByteData: timeData });
