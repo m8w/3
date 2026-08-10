@@ -195,7 +195,19 @@ function mutatePreset(src, a){
     if (typeof p[k] === 'string') p[k] = jitFloats(p[k], a * 0.6);   // gentler on equations
   return p;
 }
-function maybeMutate(base){ return mutateAmt > 0 ? mutatePreset(base, mutateAmt) : base; }
+// Mutation is a MOMENTARY, on-demand effect — it never persists. The auto-cycle
+// and manual navigation always load the clean, unmutated preset, so every preset
+// change resets values back to normal. Pressing G re-renders the CURRENT presets
+// with a jittered variation; it clears itself the next time each screen cycles.
+function mutateCurrent(){
+  for (let s = 0; s < 3; s++){
+    const idx = screen[s].idx;
+    if (idx < 0) continue;
+    const base = allPresets[names[idx]];
+    try { viz[s].loadPreset(patchPreset(mutateAmt > 0 ? mutatePreset(base, mutateAmt) : base), 1.5); }
+    catch(e) { try { viz[s].loadPreset(patchPreset(base), 0); } catch(_){} }   // bad jitter → clean
+  }
+}
 
 // ── audio: shared 32-bin → 1024-bin frequency + waveform buffers ──────────────
 const FBINS = 1024;
@@ -267,7 +279,7 @@ function loadOn(s, blend) {
   for (let i = 0; i < n; i++) {
     const idx = (start + i) % n;
     if (rejected.has(names[idx])) continue;
-    try { viz[s].loadPreset(patchPreset(maybeMutate(allPresets[names[idx]])), blend); screen[s].idx = idx; return true; }
+    try { viz[s].loadPreset(patchPreset(allPresets[names[idx]]), blend); screen[s].idx = idx; return true; }
     catch(e) { /* try next */ }
   }
   return false;
@@ -279,7 +291,7 @@ function stepOn(s, dir, blend) {
   for (let i = 0; i < n; i++) {
     const idx = (start + dir*i + n*1000) % n;
     if (rejected.has(names[idx])) continue;
-    try { viz[s].loadPreset(patchPreset(maybeMutate(allPresets[names[idx]])), blend); screen[s].idx = idx; refreshHUD(); return; }
+    try { viz[s].loadPreset(patchPreset(allPresets[names[idx]]), blend); screen[s].idx = idx; refreshHUD(); return; }
     catch(e) {}
   }
 }
@@ -652,9 +664,9 @@ window._keyCommand = function(cmd){
     case 'wup':  screen[selected].weight = Math.min(1.6, screen[selected].weight + 0.1); refreshHUD(); break;
     case 'auto': autoMix = !autoMix; refreshHUD(); break;
     case 'react': reactMode = reactMode === 'bands' ? 'stereo' : 'bands'; refreshHUD(); showBar(); break; // R
-    case 'mutate': // G — cycle mutation intensity and re-roll all screens with a fresh variation
+    case 'mutate': // G — momentary: cycle strength and mutate the CURRENT look (clears on next cycle)
       mutateLevel = (mutateLevel + 1) % MUTATE_AMTS.length; mutateAmt = MUTATE_AMTS[mutateLevel];
-      for (let s = 0; s < 3; s++) if (screen[s].idx >= 0) stepOn(s, 0, 1.5);
+      mutateCurrent();
       refreshHUD(); showBar(); break;
     case 'blend':     blendMode = (blendMode + 1) % BLEND_NAMES.length; refreshHUD(); showBar(); break; // C
     case 'blendPrev': blendMode = (blendMode - 1 + BLEND_NAMES.length) % BLEND_NAMES.length; refreshHUD(); showBar(); break;
