@@ -386,8 +386,12 @@ const tex = [0,1,2].map(i => {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  // Allocate storage ONCE at the source size so the per-frame upload can use
+  // texSubImage2D (reuse) instead of texImage2D (realloc every frame).
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, SRC_W, SRC_H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
   return t;
 });
+let texAllocOK = [false, false, false];   // upgrade to sub-image once first upload succeeds
 gl.uniform1i(gl.getUniformLocation(prog, 't0'), 0);
 gl.uniform1i(gl.getUniformLocation(prog, 't1'), 1);
 gl.uniform1i(gl.getUniformLocation(prog, 't2'), 2);
@@ -519,7 +523,13 @@ function composeOnce(){
   for (let s = 0; s < 3; s++) {
     gl.activeTexture(gl.TEXTURE0 + s);
     gl.bindTexture(gl.TEXTURE_2D, tex[s]);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas[s]);
+    // Reuse the pre-allocated storage — no per-frame reallocation.
+    if (texAllocOK[s]) {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas[s]);
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas[s]);
+      texAllocOK[s] = true;
+    }
   }
   gl.uniform3f(swLoc,
     screen[0].sign * effectiveWeight(0),
