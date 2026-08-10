@@ -118,11 +118,16 @@ if (!butterchurn || !butterchurn.createVisualizer) {
 // headroom for screen capture (smoother captured audio), lower CFG.fps to 30,
 // which keeps the resolution sharp but halves the render load.
 const CFG     = (window.__MIXER || {});
-const SRC_W   = CFG.srcW   || 1280;    // per-screen butterchurn resolution (720p, sharp)
-const SRC_H   = CFG.srcH   || 720;
+// Per-screen butterchurn resolution. We run THREE full milkdrop renders every
+// frame, so this is the dominant cost. 540p sources blended up to the 1080p
+// composite stay sharp in motion while cutting fillrate ~44% vs 720p — the
+// difference between smooth and choppy on most GPUs. Bump via MIXER_SRC_W/H on
+// a powerful machine; drop to 480 (854×480) if a single screen still struggles.
+const SRC_W   = CFG.srcW   || 960;     // 540p per screen — smooth default
+const SRC_H   = CFG.srcH   || 540;
 const OUT_W   = CFG.outW   || 1920;    // composite / broadcast resolution
 const OUT_H   = CFG.outH   || 1080;
-const RENDER_FPS = CFG.fps || 60;      // render rate cap
+const RENDER_FPS = CFG.fps || 60;      // render rate cap (adaptive unless MIXER_FPS pins it)
 
 // ── microtonal EEL injection (same approach as the single-screen host) ────────
 const PF_INIT =
@@ -563,7 +568,7 @@ function frame(ts){
     _emaGap = _emaGap * 0.9 + (ts - _lastComposed) * 0.1;
     // Sustained gap well past the 60fps budget ⇒ we're missing frames. Drop to
     // a steady 30 so the delivered stream is smooth instead of stuttering.
-    if (targetFPS === 60 && _emaGap > 23) {
+    if (targetFPS === 60 && _emaGap > 20) {
       targetFPS = 30; FRAME_MS = 1000 / 30; _dropped = true;
       log('render auto-dropped to a steady 30fps (GPU could not sustain 60) — set MIXER_FPS to pin a rate');
     }
