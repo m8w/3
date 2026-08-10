@@ -360,7 +360,8 @@ void main(){
     r = mix(r, fold(r, s1), clamp(abs(w1), 0.0, 1.0));
     r = mix(r, fold(r, s2), clamp(abs(w2), 0.0, 1.0));
   }
-  o = vec4(pow(clamp(r, 0.0, 1.0), vec3(uGamma)), 1.0);
+  vec3 cr = clamp(r, 0.0, 1.0);
+  o = vec4((uGamma > 0.995 && uGamma < 1.005) ? cr : pow(cr, vec3(uGamma)), 1.0);
 }`;
 function compile(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
   if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
@@ -542,13 +543,32 @@ function composeOnce(){
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
-const FRAME_MS = 1000 / RENDER_FPS;
-let _lastFrame = -1e9;
+// Adaptive frame pacing. Choppy video is almost always UNEVEN pacing — the GPU
+// can't reliably hit 60fps with 3× butterchurn + a 1080p composite, so frames
+// land at wobbling 45–60fps and it stutters. A rock-steady 30fps looks far
+// smoother than an unstable 60. We start at the requested rate and, if the
+// machine can't sustain it, drop once to a paced 30fps (monotonic — no
+// oscillation; restart, or set MIXER_FPS, to reset). Explicitly setting
+// MIXER_FPS pins the rate and disables adaptation.
+let targetFPS = RENDER_FPS;
+let FRAME_MS  = 1000 / targetFPS;
+const adaptive = CFG.fps == null;                // pinned rate ⇒ don't auto-adapt
+let _lastFrame = -1e9, _lastComposed = -1e9, _emaGap = FRAME_MS, _dropped = false;
 function frame(ts){
   requestAnimationFrame(frame);
   if (paused) return;
   if (ts - _lastFrame < FRAME_MS - 1.5) return;   // cap render rate → frees GPU for capture
   _lastFrame = ts;
+  if (adaptive && !_dropped && _lastComposed > 0) {
+    _emaGap = _emaGap * 0.9 + (ts - _lastComposed) * 0.1;
+    // Sustained gap well past the 60fps budget ⇒ we're missing frames. Drop to
+    // a steady 30 so the delivered stream is smooth instead of stuttering.
+    if (targetFPS === 60 && _emaGap > 23) {
+      targetFPS = 30; FRAME_MS = 1000 / 30; _dropped = true;
+      log('render auto-dropped to a steady 30fps (GPU could not sustain 60) — set MIXER_FPS to pin a rate');
+    }
+  }
+  _lastComposed = ts;
   composeOnce();
   if (hudVisible) tickHUD();
 }
