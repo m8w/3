@@ -1,10 +1,23 @@
 # fluid_heat_python
 
-Audio-reactive 3D modelling synthesizer. Pure Python + moderngl + numpy.
+Audio-reactive visual instrument. Pure Python + moderngl + numpy.
 Formerly a Max/Jitter patch (see `../legacy_max/`); the Python
-implementation is the active path.
+implementation is the active path and is now feature-complete against it.
 
-## Instrument model
+Two instruments share one audio analyser:
+
+| mode    | what it is                                                        |
+|---------|-------------------------------------------------------------------|
+| `mesh`  | voxel field -> marching cubes -> shaded, **exportable** geometry   |
+| `fluid` | Navier-Stokes + heat + reaction-diffusion -> heat palette          |
+| `both`  | fluid as a volumetric backdrop, mesh drawn into it                 |
+
+    python3 main.py --mode both
+
+See **[docs/SYNTH.md](docs/SYNTH.md)** for the mesh instrument and
+**[docs/FLUID.md](docs/FLUID.md)** for the fluid solver.
+
+## Mesh instrument model
 
     audio bins        →  oscillators (voices)
     ADSR envelope     →  per-band attack / release
@@ -95,27 +108,36 @@ Shape codes: `0` sphere · `1` box · `2` torus · `3` octahedron ·
 
     fluid_heat_python/
     ├── requirements.txt
-    ├── main.py                          live windowed session
+    ├── main.py                          live windowed session (mesh/fluid/both)
     ├── main_headless.py                 batch WAV -> mesh sequence
+    ├── main_fluid_headless.py           batch WAV -> fluid PNG sequence
     ├── fh/
     │   ├── __init__.py
     │   ├── audio.py                     sounddevice + FFT + ADSR + Brownian
     │   ├── voxel.py                     3D field + SDF splats + decay + blur
     │   ├── mc.py                        marching cubes (skimage + numpy fallback)
     │   ├── mesh.py                      mesh state + OBJ/STL/PLY exporters
+    │   ├── fluid.py                     Stable Fluids FBO ping-pong solver
+    │   ├── video.py                     archive decode + A/B crossfade textures
     │   ├── shaders.py                   GLSL file loader
     │   ├── render.py                    moderngl VBO/EBO + program
-    │   └── synth.py                     top-level orchestrator + window app
+    │   └── synth.py                     orchestrator + window app + key bindings
     ├── shaders/
-    │   ├── mesh_shade.vert              vertex noise displacement
-    │   └── mesh_shade.frag              heat palette + rim + Reinhard tonemap
+    │   ├── mesh_shade.vert/.frag        mesh: noise displacement + heat palette
+    │   └── fluid/
+    │       ├── fullscreen.vert          shared quad for every fluid pass
+    │       ├── inject · advect · buoyancy · diffuse · viscosity
+    │       ├── vorticity · divergence · jacobi · gradient
+    │       ├── reaction · organic_lut · volume
+    │       └── video_vector · video_skin · crossfade · blit
     ├── scripts/
     │   ├── archive_indexer.py           SQLite indexer for local + remote videos
     │   ├── archive_resolver.py          OSC yt-dlp sidecar + LRU cache
     │   └── youtube_to_csv.py            dump YouTube channel to CSV
     ├── exports/                         default STL/OBJ destination
     └── docs/
-        ├── SYNTH.md                     instrument playbook (Python edition)
+        ├── SYNTH.md                     mesh instrument playbook
+        ├── FLUID.md                     fluid solver: equations, tuning, measurements
         ├── ARCHIVE.md                   video archive integration
         ├── STREAMING.md                 yt-dlp + LRU cache workflow
         └── EXTERNAL_RADIO.md            bridging with external_radio.py
@@ -127,17 +149,25 @@ Shape codes: `0` sphere · `1` box · `2` torus · `3` octahedron ·
 - **Houdini**: File node → OBJ/PLY. STL if you need welded topology
 - **Unreal / Unity**: STL via converter, or FBX after Blender pass
 
+## Keyboard bindings (fluid / both)
+
+| key       | action                        |
+|-----------|-------------------------------|
+| `M`       | cycle mode (mesh/fluid/both)  |
+| `[` / `]` | buoyancy (heat's upward pull) |
+| `-` / `=` | vorticity confinement (swirl) |
+| `V`       | toggle volumetric lift        |
+| `R`       | reseed reaction-diffusion     |
+| `C`       | clear both fields             |
+
 ## Escape hatches
 
-- **Faster inner loops** (32³ → 64³ at 60 fps): add `numba` and `@njit`
-  the splat + convolve. The pure-numpy version handles 48³ comfortably.
-- **True 2D fluid** (Navier-Stokes + heat): the original Max GLSL is
-  under `../legacy_max/shaders/*.jxs` — the shader bodies port straight
-  to `moderngl` framebuffer ping-pong. Not yet re-implemented in Python.
-- **Web target**: because the shaders are plain GLSL 3.30, the same
-  pipeline works with pyodide + WebGL2 or a Rust/wgpu port when the
-  time comes.
+- **Faster inner loops** (32³ → 64³ mesh at 60 fps): add `numba` and
+  `@njit` the splat + convolve. Pure numpy handles 48³ comfortably.
+- **Bigger fluid**: `jacobi_iters` is the main cost lever; 20 iterations
+  still removes 95% of divergence.
+- **Web target**: the shaders are plain GLSL 3.30, so the same pipeline
+  works with WebGL2 or a Rust/wgpu port when the time comes.
 
 See `../legacy_max/docs/` for the historical Max patches — kept for
-reference and because the archive-management docs still describe the
-Python scripts under `scripts/`.
+reference only.
