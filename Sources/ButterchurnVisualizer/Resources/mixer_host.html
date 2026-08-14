@@ -463,7 +463,8 @@ function onSongDownbeat(){
   midiPulse = Math.min(1.6, midiPulse + 0.9);
   if (anchorIndex <= 0) return;                       // skip the startup anchor
   if (names.length) for (let s = 0; s < 3; s++) loadOn(s, 3.0);
-  blendMode = (blendMode + 1) % BLEND_NAMES.length;
+  // Blend mode is NEVER changed automatically — it stays exactly where you set it
+  // (C key / HUD) until you change it again.
   refreshHUD();
 }
 // Before any anchor arrives, free-run the clock so the oscillators still move.
