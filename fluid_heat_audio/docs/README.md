@@ -115,6 +115,8 @@ heat color before being additively mixed.
     |   |-- fh.archive_fetcher.maxpat SQLite + jit.movie A/B crossfader
     |   |-- fh.archive_pair.maxpat    dual-channel fetcher (53k skin + 10k nerves)
     |   |-- fh.resolver_bridge.maxpat OSC bridge to archive_resolver.py
+    |   |-- fh.voxel_field.maxpat     3D voxel field (48^3, decay+splat+blur per frame)
+    |   |-- fh.mesh_synth.maxpat      3D modeling synthesizer (voices, MC, export)
     |-- shaders/
     |   |-- fh.inject.jxs             audio-driven source term + drift
     |   |-- fh.video_displace.jxs     archive video as vector field (legacy single-archive)
@@ -138,6 +140,9 @@ heat color before being additively mixed.
     |   |-- archive_fetcher.js        Max JS heat-aware picker
     |   |-- archive_resolver.py       OSC sidecar: yt-dlp + LRU cache (no full local copy needed)
     |   |-- youtube_to_csv.py         dump a YouTube channel/playlist to CSV for indexer
+    |   |-- voxel_splat.js            JS: audio bins -> SDF splats into 3D field
+    |   |-- marching_cubes.js         JS: isosurface extraction (Bourke tables)
+    |   |-- mesh_export.js            JS: write current mesh to OBJ / STL / PLY
     |-- docs/
         |-- README.md                 this file
         |-- PATCHING.md               open & run checklist
@@ -166,6 +171,11 @@ disk cache so only the working set ever lands locally.
 See [EXTERNAL_RADIO.md](EXTERNAL_RADIO.md) if you already drive audio with
 the `external_radio.py` script - the same CSV (`youtube_videos.csv`),
 cookies, and Google Drive file ID feed both systems verbatim.
+
+See [SYNTH.md](SYNTH.md) for the fluid_heat_audio 3D modeling synthesizer:
+audio bins -> 8 SDF voices -> 48^3 voxel field -> marching cubes -> mesh
+with heat-palette shading, freeze/export to OBJ/STL/PLY for Blender,
+Cinema 4D, Houdini, Unreal.
 
 ## Notes
 
