@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jittershader name="fh.blackbody">
+	<description>
+		Heat-to-Color Transfer Function (Blackbody / Thermal LUT).
+		tex0 = fluid state (RG velocity, B temp, A density)
+		tex1 = asemic writing texture (optional), distorted by velocity field
+
+		Interpolates a 5-stop LUT:
+			T=0.00 -> #000000 (Black,  cold)
+			T=0.25 -> #1a0033 (Deep Purple, cool)
+			T=0.50 -> #e63e00 (Burning Orange, warm)
+			T=0.75 -> #ffcc00 (Yellow, hot)
+			T=1.00 -> #ffffff (White,  peak audio)
+	</description>
+	<param name="tex0" type="int" default="0" />
+	<param name="tex1" type="int" default="1" />
+	<param name="texdim0" type="vec2" state="TEXDIM0" />
+	<param name="texdim1" type="vec2" state="TEXDIM1" />
+	<param name="heat_gain"     type="float" default="1.0" />
+	<param name="density_gain"  type="float" default="1.2" />
+	<param name="asemic_mix"    type="float" default="0.65" />
+	<param name="asemic_flow"   type="float" default="28.0" />
+	<param name="glow"          type="float" default="0.35" />
+	<param name="exposure"      type="float" default="1.1" />
+	<param name="modelViewProjectionMatrix" type="mat4" state="MODELVIEW_PROJECTION_MATRIX" />
+	<param name="textureMatrix0" type="mat4" state="TEXTURE0_MATRIX" />
+	<param name="textureMatrix1" type="mat4" state="TEXTURE1_MATRIX" />
+	<param name="position" type="vec3" state="POSITION" />
+	<param name="texcoord" type="vec2" state="TEXCOORD" />
+
+	<language name="glsl" version="1.2">
+		<bind param="modelViewProjectionMatrix" program="vp" />
+		<bind param="textureMatrix0" program="vp" />
+		<bind param="textureMatrix1" program="vp" />
+		<bind param="position" program="vp" />
+		<bind param="texcoord" program="vp" />
+		<bind param="tex0" program="fp" />
+		<bind param="tex1" program="fp" />
+		<bind param="texdim0" program="fp" />
+		<bind param="texdim1" program="fp" />
+		<bind param="heat_gain" program="fp" />
+		<bind param="density_gain" program="fp" />
+		<bind param="asemic_mix" program="fp" />
+		<bind param="asemic_flow" program="fp" />
+		<bind param="glow" program="fp" />
+		<bind param="exposure" program="fp" />
+
+		<program name="vp" type="vertex">
+		<![CDATA[
+		attribute vec3 position;
+		attribute vec2 texcoord;
+		uniform mat4 modelViewProjectionMatrix;
+		uniform mat4 textureMatrix0;
+		uniform mat4 textureMatrix1;
+		void main() {
+			gl_Position = modelViewProjectionMatrix * vec4(position, 1.);
+			gl_TexCoord[0] = textureMatrix0 * vec4(texcoord, 0., 1.);
+			gl_TexCoord[1] = textureMatrix1 * vec4(texcoord, 0., 1.);
+		}
+		]]>
+		</program>
+		<program name="fp" type="fragment">
+		<![CDATA[
+		#version 120
+		uniform sampler2DRect tex0; // fluid state
+		uniform sampler2DRect tex1; // asemic layer
+		uniform vec2 texdim0, texdim1;
+		uniform float heat_gain, density_gain, asemic_mix, asemic_flow, glow, exposure;
+
+		vec3 blackbody(float t) {
+			t = clamp(t, 0.0, 1.0);
+			vec3 c0 = vec3(0.0, 0.0, 0.0);                        // #000000
+			vec3 c1 = vec3(0x1a/255., 0x00/255., 0x33/255.);      // #1a0033
+			vec3 c2 = vec3(0xe6/255., 0x3e/255., 0x00/255.);      // #e63e00
+			vec3 c3 = vec3(0xff/255., 0xcc/255., 0x00/255.);      // #ffcc00
+			vec3 c4 = vec3(1.0);                                  // #ffffff
+			if (t < 0.25)      return mix(c0, c1, t / 0.25);
+			else if (t < 0.50) return mix(c1, c2, (t - 0.25) / 0.25);
+			else if (t < 0.75) return mix(c2, c3, (t - 0.50) / 0.25);
+			else               return mix(c3, c4, (t - 0.75) / 0.25);
+		}
+
+		void main() {
+			vec2 uv0 = gl_TexCoord[0].xy;
+			vec4 s   = texture2DRect(tex0, uv0);
+			vec2 vel = s.rg;
+			float T  = clamp(s.b * heat_gain, 0.0, 1.0);
+			float D  = clamp(s.a * density_gain, 0.0, 1.0);
+
+			// distort asemic uv by velocity field (fluid carries the writing)
+			vec2 uvn = uv0 / texdim0;
+			vec2 uv1 = uvn + vel * (asemic_flow / max(texdim0.x, texdim0.y));
+			uv1 = clamp(uv1, 0.0, 1.0) * texdim1;
+			vec4 asemic = texture2DRect(tex1, uv1);
+
+			// Heat drives color via blackbody LUT; density modulates brightness
+			vec3 hot = blackbody(T);
+			float lum = D + T * 0.5;
+			vec3 col = hot * lum;
+
+			// asemic layer tinted by the local heat color
+			vec3 scrib = asemic.rgb * (0.4 + 0.9 * hot);
+			col = mix(col, col + scrib, asemic_mix * asemic.a);
+
+			// neighborhood glow
+			vec4 n = 0.25 * (
+				texture2DRect(tex0, uv0 + vec2( 2., 0.)) +
+				texture2DRect(tex0, uv0 + vec2(-2., 0.)) +
+				texture2DRect(tex0, uv0 + vec2( 0., 2.)) +
+				texture2DRect(tex0, uv0 + vec2( 0.,-2.))
+			);
+			col += blackbody(clamp(n.b * heat_gain, 0., 1.)) * n.a * glow;
+
+			// Reinhard exposure
+			col *= exposure;
+			col = col / (1.0 + col);
+
+			gl_FragColor = vec4(col, 1.0);
+		}
+		]]>
+		</program>
+	</language>
+</jittershader>

@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jittershader name="fh.video_displace">
+	<description>
+		Archive-video vector field. A video from the user's archive is sampled
+		as a spatial modulator for fluid injection:
+		  - luminance becomes a heat + density mask ("dark = thick / light = hot")
+		  - luma gradient (Sobel) becomes a directional force
+		Ghost dissolves happen upstream in jit.gl.texture crossfade; this
+		shader just reads whatever's bound.
+
+		tex0 = current fluid state (RG vel, B T, A D)
+		tex1 = archive video texture (RGB)
+	</description>
+	<param name="tex0" type="int" default="0" />
+	<param name="tex1" type="int" default="1" />
+	<param name="texdim0" type="vec2" state="TEXDIM0" />
+	<param name="texdim1" type="vec2" state="TEXDIM1" />
+	<param name="vfield_force" type="float" default="0.9" />
+	<param name="vfield_heat"  type="float" default="0.45" />
+	<param name="vfield_density" type="float" default="0.3" />
+	<param name="dark_thick"   type="float" default="0.75" />
+	<param name="modelViewProjectionMatrix" type="mat4" state="MODELVIEW_PROJECTION_MATRIX" />
+	<param name="textureMatrix0" type="mat4" state="TEXTURE0_MATRIX" />
+	<param name="textureMatrix1" type="mat4" state="TEXTURE1_MATRIX" />
+	<param name="position" type="vec3" state="POSITION" />
+	<param name="texcoord" type="vec2" state="TEXCOORD" />
+
+	<language name="glsl" version="1.2">
+		<bind param="modelViewProjectionMatrix" program="vp" />
+		<bind param="textureMatrix0" program="vp" />
+		<bind param="textureMatrix1" program="vp" />
+		<bind param="position" program="vp" />
+		<bind param="texcoord" program="vp" />
+		<bind param="tex0" program="fp" />
+		<bind param="tex1" program="fp" />
+		<bind param="texdim0" program="fp" />
+		<bind param="texdim1" program="fp" />
+		<bind param="vfield_force" program="fp" />
+		<bind param="vfield_heat" program="fp" />
+		<bind param="vfield_density" program="fp" />
+		<bind param="dark_thick" program="fp" />
+
+		<program name="vp" type="vertex">
+		<![CDATA[
+		attribute vec3 position;
+		attribute vec2 texcoord;
+		uniform mat4 modelViewProjectionMatrix;
+		uniform mat4 textureMatrix0;
+		uniform mat4 textureMatrix1;
+		void main() {
+			gl_Position = modelViewProjectionMatrix * vec4(position, 1.);
+			gl_TexCoord[0] = textureMatrix0 * vec4(texcoord, 0., 1.);
+			gl_TexCoord[1] = textureMatrix1 * vec4(texcoord, 0., 1.);
+		}
+		]]>
+		</program>
+		<program name="fp" type="fragment">
+		<![CDATA[
+		#version 120
+		uniform sampler2DRect tex0;
+		uniform sampler2DRect tex1;
+		uniform vec2 texdim0, texdim1;
+		uniform float vfield_force, vfield_heat, vfield_density, dark_thick;
+
+		float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+		void main() {
+			vec2 uv0 = gl_TexCoord[0].xy;
+			vec2 uvn = uv0 / texdim0;
+			vec2 uv1 = uvn * texdim1;
+
+			vec4 s = texture2DRect(tex0, uv0);
+
+			vec3 cc = texture2DRect(tex1, uv1).rgb;
+			float L = luma(cc);
+			float Lx1 = luma(texture2DRect(tex1, uv1 + vec2(1., 0.)).rgb);
+			float Lx0 = luma(texture2DRect(tex1, uv1 - vec2(1., 0.)).rgb);
+			float Ly1 = luma(texture2DRect(tex1, uv1 + vec2(0., 1.)).rgb);
+			float Ly0 = luma(texture2DRect(tex1, uv1 - vec2(0., 1.)).rgb);
+			vec2 g = 0.5 * vec2(Lx1 - Lx0, Ly1 - Ly0);
+
+			// dark areas "thicken" the fluid by damping velocity
+			float damp = mix(1.0, 1.0 - dark_thick, 1.0 - L);
+			vec2 vel = s.rg * damp + g * vfield_force;
+
+			// luma adds heat and density locally (re-animates old ink)
+			float T = s.b + L * L * vfield_heat;
+			float D = s.a + (1.0 - L) * vfield_density * 0.5 + L * vfield_density;
+
+			gl_FragColor = vec4(vel, T, D);
+		}
+		]]>
+		</program>
+	</language>
+</jittershader>

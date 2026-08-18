@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jittershader name="fh.buoyancy">
+	<description>
+		Boussinesq buoyancy coupling. Temperature (plane B) produces upward
+		velocity; density (plane A) produces downward gravity. f = (alpha*T - beta*D) * up.
+	</description>
+	<param name="tex0" type="int" default="0" />
+	<param name="texdim" type="vec2" state="TEXDIM0" />
+	<param name="alpha" type="float" default="1.8" />
+	<param name="beta"  type="float" default="0.25" />
+	<param name="dt"    type="float" default="0.016" />
+	<param name="T_amb" type="float" default="0.0" />
+	<param name="up"    type="vec2"  default="0.0 1.0" />
+	<param name="modelViewProjectionMatrix" type="mat4" state="MODELVIEW_PROJECTION_MATRIX" />
+	<param name="textureMatrix0" type="mat4" state="TEXTURE0_MATRIX" />
+	<param name="position" type="vec3" state="POSITION" />
+	<param name="texcoord" type="vec2" state="TEXCOORD" />
+
+	<language name="glsl" version="1.2">
+		<bind param="modelViewProjectionMatrix" program="vp" />
+		<bind param="textureMatrix0" program="vp" />
+		<bind param="position" program="vp" />
+		<bind param="texcoord" program="vp" />
+		<bind param="tex0" program="fp" />
+		<bind param="alpha" program="fp" />
+		<bind param="beta" program="fp" />
+		<bind param="dt" program="fp" />
+		<bind param="T_amb" program="fp" />
+		<bind param="up" program="fp" />
+
+		<program name="vp" type="vertex">
+		<![CDATA[
+		attribute vec3 position;
+		attribute vec2 texcoord;
+		uniform mat4 modelViewProjectionMatrix;
+		uniform mat4 textureMatrix0;
+		void main() {
+			gl_Position = modelViewProjectionMatrix * vec4(position, 1.);
+			gl_TexCoord[0] = textureMatrix0 * vec4(texcoord, 0., 1.);
+		}
+		]]>
+		</program>
+		<program name="fp" type="fragment">
+		<![CDATA[
+		#version 120
+		uniform sampler2DRect tex0;
+		uniform float alpha, beta, dt, T_amb;
+		uniform vec2 up;
+		void main() {
+			vec2 uv = gl_TexCoord[0].xy;
+			vec4 s = texture2DRect(tex0, uv);
+			float force = (alpha * (s.b - T_amb) - beta * s.a) * dt;
+			vec2 v = s.rg + up * force;
+			gl_FragColor = vec4(v, s.b, s.a);
+		}
+		]]>
+		</program>
+	</language>
+</jittershader>

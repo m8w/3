@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jittershader name="fh.organic_lut">
+	<description>
+		Biological color response. As heat decays (density lingers, temperature
+		falls), the palette shifts from incandescent (white/yellow) to organic
+		(deep greens, moss, vein-purples). Reaction-diffusion V channel adds
+		"veins". Asemic layer is flow-distorted.
+
+		tex0 = fluid state         RG=vel B=T A=D
+		tex1 = asemic writing      RGBA
+		tex2 = reaction-diffusion  R=U G=V (optional - bind 0 if absent)
+	</description>
+	<param name="tex0" type="int" default="0" />
+	<param name="tex1" type="int" default="1" />
+	<param name="tex2" type="int" default="2" />
+	<param name="texdim0" type="vec2" state="TEXDIM0" />
+	<param name="texdim1" type="vec2" state="TEXDIM1" />
+	<param name="texdim2" type="vec2" state="TEXDIM2" />
+	<param name="heat_gain"     type="float" default="1.0" />
+	<param name="density_gain"  type="float" default="1.2" />
+	<param name="asemic_mix"    type="float" default="0.65" />
+	<param name="asemic_flow"   type="float" default="28.0" />
+	<param name="glow"          type="float" default="0.35" />
+	<param name="exposure"      type="float" default="1.1" />
+	<param name="organic_bias"  type="float" default="0.55" />
+	<param name="vein_gain"     type="float" default="1.2" />
+	<param name="decay_mix"     type="float" default="0.8" />
+	<param name="modelViewProjectionMatrix" type="mat4" state="MODELVIEW_PROJECTION_MATRIX" />
+	<param name="textureMatrix0" type="mat4" state="TEXTURE0_MATRIX" />
+	<param name="textureMatrix1" type="mat4" state="TEXTURE1_MATRIX" />
+	<param name="textureMatrix2" type="mat4" state="TEXTURE2_MATRIX" />
+	<param name="position" type="vec3" state="POSITION" />
+	<param name="texcoord" type="vec2" state="TEXCOORD" />
+
+	<language name="glsl" version="1.2">
+		<bind param="modelViewProjectionMatrix" program="vp" />
+		<bind param="textureMatrix0" program="vp" />
+		<bind param="textureMatrix1" program="vp" />
+		<bind param="textureMatrix2" program="vp" />
+		<bind param="position" program="vp" />
+		<bind param="texcoord" program="vp" />
+		<bind param="tex0" program="fp" />
+		<bind param="tex1" program="fp" />
+		<bind param="tex2" program="fp" />
+		<bind param="texdim0" program="fp" />
+		<bind param="texdim1" program="fp" />
+		<bind param="texdim2" program="fp" />
+		<bind param="heat_gain" program="fp" />
+		<bind param="density_gain" program="fp" />
+		<bind param="asemic_mix" program="fp" />
+		<bind param="asemic_flow" program="fp" />
+		<bind param="glow" program="fp" />
+		<bind param="exposure" program="fp" />
+		<bind param="organic_bias" program="fp" />
+		<bind param="vein_gain" program="fp" />
+		<bind param="decay_mix" program="fp" />
+
+		<program name="vp" type="vertex">
+		<![CDATA[
+		attribute vec3 position;
+		attribute vec2 texcoord;
+		uniform mat4 modelViewProjectionMatrix;
+		uniform mat4 textureMatrix0;
+		uniform mat4 textureMatrix1;
+		uniform mat4 textureMatrix2;
+		void main() {
+			gl_Position = modelViewProjectionMatrix * vec4(position, 1.);
+			gl_TexCoord[0] = textureMatrix0 * vec4(texcoord, 0., 1.);
+			gl_TexCoord[1] = textureMatrix1 * vec4(texcoord, 0., 1.);
+			gl_TexCoord[2] = textureMatrix2 * vec4(texcoord, 0., 1.);
+		}
+		]]>
+		</program>
+		<program name="fp" type="fragment">
+		<![CDATA[
+		#version 120
+		uniform sampler2DRect tex0; // fluid state
+		uniform sampler2DRect tex1; // asemic
+		uniform sampler2DRect tex2; // reaction-diffusion
+		uniform vec2 texdim0, texdim1, texdim2;
+		uniform float heat_gain, density_gain, asemic_mix, asemic_flow;
+		uniform float glow, exposure, organic_bias, vein_gain, decay_mix;
+
+		// incandescent (hot / fresh) palette
+		vec3 incandescent(float t) {
+			vec3 c0 = vec3(0.0);
+			vec3 c1 = vec3(0x1a, 0x00, 0x33) / 255.0;
+			vec3 c2 = vec3(0xe6, 0x3e, 0x00) / 255.0;
+			vec3 c3 = vec3(0xff, 0xcc, 0x00) / 255.0;
+			vec3 c4 = vec3(1.0);
+			if (t < 0.25)      return mix(c0, c1, t / 0.25);
+			else if (t < 0.50) return mix(c1, c2, (t - 0.25) / 0.25);
+			else if (t < 0.75) return mix(c2, c3, (t - 0.50) / 0.25);
+			else               return mix(c3, c4, (t - 0.75) / 0.25);
+		}
+
+		// organic (cooling / biological) palette
+		vec3 organic(float t) {
+			vec3 c0 = vec3(0x05, 0x0a, 0x08) / 255.0;     // near-black forest
+			vec3 c1 = vec3(0x2e, 0x1a, 0x45) / 255.0;     // vein purple
+			vec3 c2 = vec3(0x24, 0x55, 0x33) / 255.0;     // moss
+			vec3 c3 = vec3(0x8a, 0xb0, 0x4a) / 255.0;     // lichen
+			vec3 c4 = vec3(0xe8, 0xe0, 0xb4) / 255.0;     // bone
+			if (t < 0.25)      return mix(c0, c1, t / 0.25);
+			else if (t < 0.50) return mix(c1, c2, (t - 0.25) / 0.25);
+			else if (t < 0.75) return mix(c2, c3, (t - 0.50) / 0.25);
+			else               return mix(c3, c4, (t - 0.75) / 0.25);
+		}
+
+		void main() {
+			vec2 uv0 = gl_TexCoord[0].xy;
+			vec4 s   = texture2DRect(tex0, uv0);
+			vec2 vel = s.rg;
+			float T = clamp(s.b * heat_gain, 0.0, 1.0);
+			float D = clamp(s.a * density_gain, 0.0, 1.0);
+
+			// how "decayed" is this cell? high density + low heat = cooling/organic
+			float decay = clamp(D - T, 0.0, 1.0);
+			float org_w = clamp(decay * decay_mix + organic_bias * (1.0 - T) * D, 0.0, 1.0);
+
+			// reaction-diffusion V channel as vein pattern
+			vec2 uv2 = (uv0 / texdim0) * texdim2;
+			float V = texture2DRect(tex2, uv2).g;
+			float veins = smoothstep(0.2, 0.55, V) * vein_gain;
+
+			// distort asemic uv by velocity field
+			vec2 uvn = uv0 / texdim0;
+			vec2 uv1 = uvn + vel * (asemic_flow / max(texdim0.x, texdim0.y));
+			uv1 = clamp(uv1, 0.0, 1.0) * texdim1;
+			vec4 asemic = texture2DRect(tex1, uv1);
+
+			vec3 hot  = incandescent(T);
+			vec3 cool = organic(clamp(D + veins * 0.4, 0.0, 1.0));
+			vec3 pal  = mix(hot, cool, org_w);
+			float lum = D + T * 0.5 + veins * 0.35;
+			vec3 col = pal * lum;
+
+			// veins add their own saturation
+			col = mix(col, col + cool * veins * 0.6, 0.7);
+
+			vec3 scrib = asemic.rgb * (0.4 + 0.9 * mix(hot, cool, org_w));
+			col = mix(col, col + scrib, asemic_mix * asemic.a);
+
+			vec4 n = 0.25 * (
+				texture2DRect(tex0, uv0 + vec2( 2., 0.)) +
+				texture2DRect(tex0, uv0 + vec2(-2., 0.)) +
+				texture2DRect(tex0, uv0 + vec2( 0., 2.)) +
+				texture2DRect(tex0, uv0 + vec2( 0.,-2.))
+			);
+			float gT = clamp(n.b * heat_gain, 0., 1.);
+			float gD = clamp(n.a * density_gain, 0., 1.);
+			float gw = clamp(max(gD - gT, 0.) * decay_mix + organic_bias * (1. - gT) * gD, 0., 1.);
+			col += mix(incandescent(gT), organic(gD), gw) * n.a * glow;
+
+			col *= exposure;
+			col = col / (1.0 + col);
+			gl_FragColor = vec4(col, 1.0);
+		}
+		]]>
+		</program>
+	</language>
+</jittershader>

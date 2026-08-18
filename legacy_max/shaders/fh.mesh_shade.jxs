@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jittershader name="fh.mesh_shade">
+	<description>
+		Mesh shader for the marching-cubes isosurface.
+		Vertex : 3D value-noise displacement scaled by audio pulse.
+		Fragment: incandescent/organic 5-stop palette selected by heat (from
+		normalized world position), lit by per-vertex normal + directional light.
+	</description>
+	<param name="pulse"       type="float" default="0.0"  />
+	<param name="displace"    type="float" default="0.12" />
+	<param name="noise_scale" type="float" default="3.0"  />
+	<param name="heat_gain"   type="float" default="1.0"  />
+	<param name="organic_bias" type="float" default="0.35" />
+	<param name="rim"         type="float" default="0.35" />
+	<param name="ambient"     type="float" default="0.18" />
+	<param name="time"        type="float" default="0.0"  />
+
+	<param name="modelViewProjectionMatrix" type="mat4" state="MODELVIEW_PROJECTION_MATRIX" />
+	<param name="modelViewMatrix"           type="mat4" state="MODELVIEW_MATRIX" />
+	<param name="normalMatrix"              type="mat3" state="NORMAL_MATRIX" />
+	<param name="position" type="vec3" state="POSITION" />
+	<param name="normal"   type="vec3" state="NORMAL" />
+
+	<language name="glsl" version="1.2">
+		<bind param="modelViewProjectionMatrix" program="vp" />
+		<bind param="modelViewMatrix" program="vp" />
+		<bind param="normalMatrix" program="vp" />
+		<bind param="position" program="vp" />
+		<bind param="normal"   program="vp" />
+		<bind param="pulse" program="vp" />
+		<bind param="displace" program="vp" />
+		<bind param="noise_scale" program="vp" />
+		<bind param="time" program="vp" />
+
+		<bind param="heat_gain"    program="fp" />
+		<bind param="organic_bias" program="fp" />
+		<bind param="rim"          program="fp" />
+		<bind param="ambient"      program="fp" />
+		<bind param="pulse"        program="fp" />
+
+		<program name="vp" type="vertex">
+		<![CDATA[
+		attribute vec3 position;
+		attribute vec3 normal;
+		uniform mat4 modelViewProjectionMatrix;
+		uniform mat4 modelViewMatrix;
+		uniform mat3 normalMatrix;
+		uniform float pulse, displace, noise_scale, time;
+
+		varying vec3 vWorldPos;
+		varying vec3 vNormalEye;
+		varying vec3 vViewDir;
+
+		float hash13(vec3 p) {
+			p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+			p += dot(p, p.yxz + 33.33);
+			return fract((p.x + p.y) * p.z);
+		}
+		float vnoise3(vec3 p) {
+			vec3 i = floor(p);
+			vec3 f = fract(p);
+			vec3 u = f * f * (3.0 - 2.0 * f);
+			float n000 = hash13(i);
+			float n100 = hash13(i + vec3(1,0,0));
+			float n010 = hash13(i + vec3(0,1,0));
+			float n110 = hash13(i + vec3(1,1,0));
+			float n001 = hash13(i + vec3(0,0,1));
+			float n101 = hash13(i + vec3(1,0,1));
+			float n011 = hash13(i + vec3(0,1,1));
+			float n111 = hash13(i + vec3(1,1,1));
+			return mix(
+				mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+				mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y),
+				u.z);
+		}
+
+		void main() {
+			vec3 p = position;
+			vec3 n = normalize(normal);
+			// noise-driven displacement along the vertex normal
+			float d = vnoise3(p * noise_scale + vec3(time * 0.15))
+			        + 0.5 * vnoise3(p * noise_scale * 2.13 - vec3(time * 0.08));
+			d = (d - 0.75) * 2.0;
+			float amp = displace * (0.4 + 0.6 * pulse);
+			vec3 pd = p + n * d * amp;
+
+			vec4 mv = modelViewMatrix * vec4(pd, 1.0);
+			vWorldPos = pd;
+			vNormalEye = normalize(normalMatrix * n);
+			vViewDir = -normalize(mv.xyz);
+			gl_Position = modelViewProjectionMatrix * vec4(pd, 1.0);
+		}
+		]]>
+		</program>
+
+		<program name="fp" type="fragment">
+		<![CDATA[
+		#version 120
+		varying vec3 vWorldPos;
+		varying vec3 vNormalEye;
+		varying vec3 vViewDir;
+		uniform float heat_gain, organic_bias, rim, ambient, pulse;
+
+		vec3 incandescent(float t) {
+			vec3 c0 = vec3(0.0);
+			vec3 c1 = vec3(0x1a, 0x00, 0x33) / 255.0;
+			vec3 c2 = vec3(0xe6, 0x3e, 0x00) / 255.0;
+			vec3 c3 = vec3(0xff, 0xcc, 0x00) / 255.0;
+			vec3 c4 = vec3(1.0);
+			if (t < 0.25)      return mix(c0, c1, t / 0.25);
+			else if (t < 0.50) return mix(c1, c2, (t - 0.25) / 0.25);
+			else if (t < 0.75) return mix(c2, c3, (t - 0.50) / 0.25);
+			else               return mix(c3, c4, (t - 0.75) / 0.25);
+		}
+
+		vec3 organic(float t) {
+			vec3 c0 = vec3(0x05, 0x0a, 0x08) / 255.0;
+			vec3 c1 = vec3(0x2e, 0x1a, 0x45) / 255.0;
+			vec3 c2 = vec3(0x24, 0x55, 0x33) / 255.0;
+			vec3 c3 = vec3(0x8a, 0xb0, 0x4a) / 255.0;
+			vec3 c4 = vec3(0xe8, 0xe0, 0xb4) / 255.0;
+			if (t < 0.25)      return mix(c0, c1, t / 0.25);
+			else if (t < 0.50) return mix(c1, c2, (t - 0.25) / 0.25);
+			else if (t < 0.75) return mix(c2, c3, (t - 0.50) / 0.25);
+			else               return mix(c3, c4, (t - 0.75) / 0.25);
+		}
+
+		void main() {
+			// heat derived from world height + radial distance + pulse
+			float radial = length(vWorldPos.xz);
+			float h = clamp(0.55 + vWorldPos.y * 0.5
+			               - radial * 0.35 + pulse * 0.25, 0.0, 1.0);
+			float w = clamp(organic_bias + (1.0 - pulse) * 0.4, 0.0, 1.0);
+			vec3 pal = mix(incandescent(h * heat_gain),
+			              organic(clamp(h + 0.15, 0.0, 1.0)), w);
+
+			vec3 L = normalize(vec3(0.4, 0.9, 0.35));
+			float lam = max(0.0, dot(vNormalEye, L));
+			float rimf = pow(1.0 - max(0.0, dot(vNormalEye, vViewDir)), 3.0);
+
+			vec3 col = pal * (ambient + lam) + pal * rimf * rim;
+			// Reinhard tonemap
+			col = col / (1.0 + col);
+			gl_FragColor = vec4(col, 1.0);
+		}
+		]]>
+		</program>
+	</language>
+</jittershader>

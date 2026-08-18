@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jittershader name="fh.video_skin">
+	<description>
+		Channel A (53k "skin"). The archive video becomes the colour / density
+		texture laid over the rendered fluid. Sampled with velocity-warped UVs
+		so it "breathes" with the flow. Heat palette from the fluid re-tints it.
+
+		tex0 = fluid state    (RG vel, B T, A D)
+		tex1 = colour pass    (from fh.organic_lut or fh.blackbody)
+		tex2 = channel A clip (skin / texture source)
+	</description>
+	<param name="tex0" type="int" default="0" />
+	<param name="tex1" type="int" default="1" />
+	<param name="tex2" type="int" default="2" />
+	<param name="texdim0" type="vec2" state="TEXDIM0" />
+	<param name="texdim1" type="vec2" state="TEXDIM1" />
+	<param name="texdim2" type="vec2" state="TEXDIM2" />
+	<param name="skin_mix"   type="float" default="0.55" />
+	<param name="warp"       type="float" default="22.0" />
+	<param name="tint"       type="float" default="0.45" />
+	<param name="contrast"   type="float" default="1.15" />
+	<param name="heat_mask"  type="float" default="1.0" />
+	<param name="modelViewProjectionMatrix" type="mat4" state="MODELVIEW_PROJECTION_MATRIX" />
+	<param name="textureMatrix0" type="mat4" state="TEXTURE0_MATRIX" />
+	<param name="textureMatrix1" type="mat4" state="TEXTURE1_MATRIX" />
+	<param name="textureMatrix2" type="mat4" state="TEXTURE2_MATRIX" />
+	<param name="position" type="vec3" state="POSITION" />
+	<param name="texcoord" type="vec2" state="TEXCOORD" />
+
+	<language name="glsl" version="1.2">
+		<bind param="modelViewProjectionMatrix" program="vp" />
+		<bind param="textureMatrix0" program="vp" />
+		<bind param="textureMatrix1" program="vp" />
+		<bind param="textureMatrix2" program="vp" />
+		<bind param="position" program="vp" />
+		<bind param="texcoord" program="vp" />
+		<bind param="tex0" program="fp" />
+		<bind param="tex1" program="fp" />
+		<bind param="tex2" program="fp" />
+		<bind param="texdim0" program="fp" />
+		<bind param="texdim1" program="fp" />
+		<bind param="texdim2" program="fp" />
+		<bind param="skin_mix" program="fp" />
+		<bind param="warp" program="fp" />
+		<bind param="tint" program="fp" />
+		<bind param="contrast" program="fp" />
+		<bind param="heat_mask" program="fp" />
+
+		<program name="vp" type="vertex">
+		<![CDATA[
+		attribute vec3 position;
+		attribute vec2 texcoord;
+		uniform mat4 modelViewProjectionMatrix;
+		uniform mat4 textureMatrix0;
+		uniform mat4 textureMatrix1;
+		uniform mat4 textureMatrix2;
+		void main() {
+			gl_Position = modelViewProjectionMatrix * vec4(position, 1.);
+			gl_TexCoord[0] = textureMatrix0 * vec4(texcoord, 0., 1.);
+			gl_TexCoord[1] = textureMatrix1 * vec4(texcoord, 0., 1.);
+			gl_TexCoord[2] = textureMatrix2 * vec4(texcoord, 0., 1.);
+		}
+		]]>
+		</program>
+		<program name="fp" type="fragment">
+		<![CDATA[
+		#version 120
+		uniform sampler2DRect tex0; // fluid state
+		uniform sampler2DRect tex1; // colour from organic_lut
+		uniform sampler2DRect tex2; // channel A clip
+		uniform vec2 texdim0, texdim1, texdim2;
+		uniform float skin_mix, warp, tint, contrast, heat_mask;
+
+		vec3 apply_contrast(vec3 c, float k) {
+			return clamp((c - 0.5) * k + 0.5, 0.0, 1.0);
+		}
+
+		void main() {
+			vec2 uv1 = gl_TexCoord[1].xy;                // render resolution
+			vec2 uvn = uv1 / texdim1;
+
+			vec4 fluid = texture2DRect(tex0, uvn * texdim0);
+			vec4 base  = texture2DRect(tex1, uv1);
+
+			// warp skin uvs by local fluid velocity so texture "breathes"
+			vec2 uv2 = uvn + fluid.rg * (warp / max(texdim0.x, texdim0.y));
+			uv2 = clamp(uv2, 0.0, 1.0) * texdim2;
+			vec3 skin = texture2DRect(tex2, uv2).rgb;
+			skin = apply_contrast(skin, contrast);
+
+			// tint skin by the current heat colour so it shares the palette
+			vec3 tinted = mix(skin, skin * base.rgb * 2.0, tint);
+
+			// heat_mask: fresh-hot cells show more skin; cold cells stay fluid-only
+			float T = clamp(fluid.b * heat_mask, 0.0, 1.0);
+			float D = clamp(fluid.a, 0.0, 1.0);
+			float m = skin_mix * (0.4 + 0.6 * (T + D * 0.5));
+
+			vec3 col = mix(base.rgb, base.rgb + tinted * D, m);
+			gl_FragColor = vec4(col, 1.0);
+		}
+		]]>
+		</program>
+	</language>
+</jittershader>
