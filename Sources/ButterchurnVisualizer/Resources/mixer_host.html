@@ -98,7 +98,8 @@
 <!-- Preset queue shim (PresetLoader may inject before the module runs) -->
 <script>
 window._presetQueue = [];
-window._addPresets  = function(p){ window._presetQueue.push(p); };
+window._addPresets    = function(p){ window._presetQueue.push({ screen: -1, presets: p }); };
+window._addPresetsFor = function(s, p){ window._presetQueue.push({ screen: s, presets: p }); };
 </script>
 
 <script type="module">
@@ -202,8 +203,8 @@ function mutatePreset(src, a){
 function mutateCurrent(){
   for (let s = 0; s < 3; s++){
     const idx = screen[s].idx;
-    if (idx < 0) continue;
-    const base = allPresets[names[idx]];
+    if (idx < 0 || idx >= namesByScreen[s].length) continue;
+    const base = allPresets[namesByScreen[s][idx]];
     try { viz[s].loadPreset(patchPreset(mutateAmt > 0 ? mutatePreset(base, mutateAmt) : base), 1.5); }
     catch(e) { try { viz[s].loadPreset(patchPreset(base), 0); } catch(_){} }   // bad jitter → clean
   }
@@ -263,7 +264,11 @@ const viz = srcCanvas.map(c => { c.width = SRC_W; c.height = SRC_H;
   return butterchurn.createVisualizer(audioCtx, c, { width: SRC_W, height: SRC_H, pixelRatio: 1 }); });
 
 const allPresets = {};
-const names = [];
+// Each screen has its OWN preset pool. In per-screen mode (three folders) the
+// pools are distinct, so the screens can never show the same preset. In shared
+// mode all three pools hold the same names (populated by _addPresets), which is
+// the original single-pool behaviour. loadOn/stepOn always work on pool s.
+const namesByScreen = [[], [], []];
 const rejected = new Set();   // names culled live via the reject key (X)
 const screen = [
   { idx:-1, sign:+1, weight:0.85, band:'bass' },
@@ -272,34 +277,38 @@ const screen = [
 ];
 let selected = 0, autoMix = true, paused = false, hudVisible = true;
 
+function currentName(s){ const p = namesByScreen[s]; return (screen[s].idx >= 0 && screen[s].idx < p.length) ? p[screen[s].idx] : null; }
+
 function loadOn(s, blend) {
-  if (!names.length) return false;
-  const n = names.length;
-  // Random jump across the WHOLE set every cycle. (The old code stepped +1 from a
-  // start chosen while only the first batch was loaded, so all three screens
-  // anchored in the low indices and crawled — you'd see the first ~1000 forever.)
-  const start = (Math.random() * n) | 0;
-  // Pass 0 avoids presets already on another screen; pass 1 relaxes that so a
-  // tiny pool still loads something.
+  const pool = namesByScreen[s];
+  if (!pool.length) return false;
+  const n = pool.length;
+  const start = (Math.random() * n) | 0;   // random jump across this screen's whole pool
+  // Pass 0 avoids presets already on another screen (by name, so it works across
+  // separate pools too); pass 1 relaxes that so a tiny pool still loads something.
+  const busy = new Set([currentName(0), currentName(1), currentName(2)]);
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < n; i++) {
       const idx = (start + i) % n;
-      if (rejected.has(names[idx])) continue;
-      if (pass === 0 && (idx === screen[0].idx || idx === screen[1].idx || idx === screen[2].idx)) continue;
-      try { viz[s].loadPreset(patchPreset(allPresets[names[idx]]), blend); screen[s].idx = idx; return true; }
+      const nm = pool[idx];
+      if (rejected.has(nm)) continue;
+      if (pass === 0 && busy.has(nm)) continue;
+      try { viz[s].loadPreset(patchPreset(allPresets[nm]), blend); screen[s].idx = idx; return true; }
       catch(e) { /* try next */ }
     }
   }
   return false;
 }
 function stepOn(s, dir, blend) {
-  if (!names.length) return;
-  const n = names.length;
+  const pool = namesByScreen[s];
+  if (!pool.length) return;
+  const n = pool.length;
   let start = screen[s].idx < 0 ? 0 : (screen[s].idx + dir + n) % n;
   for (let i = 0; i < n; i++) {
     const idx = (start + dir*i + n*1000) % n;
-    if (rejected.has(names[idx])) continue;
-    try { viz[s].loadPreset(patchPreset(allPresets[names[idx]]), blend); screen[s].idx = idx; refreshHUD(); return; }
+    const nm = pool[idx];
+    if (rejected.has(nm)) continue;
+    try { viz[s].loadPreset(patchPreset(allPresets[nm]), blend); screen[s].idx = idx; refreshHUD(); return; }
     catch(e) {}
   }
 }
@@ -308,8 +317,8 @@ function stepOn(s, dir, blend) {
 // rotation AND tell Swift to move its file out of the presets folder for good.
 function rejectCurrent() {
   const s = selected, idx = screen[s].idx;
-  if (idx < 0) return;
-  const name = names[idx];
+  if (idx < 0 || idx >= namesByScreen[s].length) return;
+  const name = namesByScreen[s][idx];
   rejected.add(name);
   try { window.webkit.messageHandlers.log.postMessage('REJECT\t' + name); } catch(_) {}
   log('rejected: ' + name);
@@ -317,12 +326,24 @@ function rejectCurrent() {
   showBar();
 }
 
-// Independent staggered auto-cycling so the mix keeps evolving.
-const CYCLE_MS = [27000, 33000, 39000];
+// Independent auto-cycling per screen with a RANDOM interval each time, so the
+// three screens never fall into a fixed, predictable rhythm: ~6 seconds ± up to
+// 3s → each change lands somewhere in 3–9s. The random jitter also keeps the
+// three screens naturally out of phase.
+const CYCLE_MS   = 6000;   // base seconds between preset changes
+const CYCLE_JIT  = 3000;   // ± random spread
+const CYCLE_BLEND = 1.2;   // shorter blend so a preset reads before the next one
 const cycleTimers = [];
+function scheduleCycle(s) {
+  const ms = CYCLE_MS + (Math.random() * 2 - 1) * CYCLE_JIT;
+  cycleTimers[s] = setTimeout(() => {
+    if (!paused) { loadOn(s, CYCLE_BLEND); refreshHUD(); }
+    scheduleCycle(s);
+  }, ms);
+}
 function startCycles() {
-  cycleTimers.forEach(clearInterval); cycleTimers.length = 0;
-  for (let s = 0; s < 3; s++) cycleTimers.push(setInterval(() => { if (!paused) { loadOn(s, 2.7); refreshHUD(); } }, CYCLE_MS[s]));
+  cycleTimers.forEach(t => clearTimeout(t)); cycleTimers.length = 0;
+  for (let s = 0; s < 3; s++) scheduleCycle(s);
 }
 
 // ── WebGL2 compositor ─────────────────────────────────────────────────────────
@@ -462,7 +483,7 @@ window._updateMIDI = m => {
 function onSongDownbeat(){
   midiPulse = Math.min(1.6, midiPulse + 0.9);
   if (anchorIndex <= 0) return;                       // skip the startup anchor
-  if (names.length) for (let s = 0; s < 3; s++) loadOn(s, 3.0);
+  for (let s = 0; s < 3; s++) loadOn(s, 3.0);         // loadOn no-ops on an empty pool
   // Blend mode is NEVER changed automatically — it stays exactly where you set it
   // (C key / HUD) until you change it again.
   refreshHUD();
@@ -530,8 +551,8 @@ function composeOnce(){
       // A bad preset/mutation threw — recover this screen without freezing the
       // whole loop. Reload its current preset UNMUTATED; if it keeps failing,
       // move on to a different preset.
-      if (++renderErr[s] <= 2 && screen[s].idx >= 0) {
-        try { viz[s].loadPreset(patchPreset(allPresets[names[screen[s].idx]]), 0); } catch(_) {}
+      if (++renderErr[s] <= 2 && currentName(s)) {
+        try { viz[s].loadPreset(patchPreset(allPresets[currentName(s)]), 0); } catch(_) {}
       } else {
         renderErr[s] = 0; stepOn(s, +1, 0);
       }
@@ -593,7 +614,7 @@ function refreshHUD(){
     p.box.classList.toggle('sel', s === selected);
     p.sgn.textContent = add ? '＋ ADD' : '− SUB';
     p.sgn.className = 'mx sgn ' + (add ? 'add' : 'sub');
-    p.nm.textContent = screen[s].idx >= 0 ? names[screen[s].idx] : '…';
+    p.nm.textContent = currentName(s) || '…';
     p.wt.value = screen[s].weight;
     p.wv.textContent = screen[s].weight.toFixed(2);
   }
@@ -644,16 +665,40 @@ bar.addEventListener('input', e => {
 window._updateQ = q => { stereoReactive = false; updateAudio(q); };
 window._updateStereo = (l, r) => { stereoReactive = true; updateStereo(l, r); };
 
-window._addPresets = function(incoming){
-  const newNames = Object.keys(incoming);
-  if (!newNames.length) return;
-  const wasEmpty = names.length === 0;
+let cyclesStarted = false;
+function addToPool(s, incoming){
+  const keys = Object.keys(incoming);
+  if (!keys.length) return;
   Object.assign(allPresets, incoming);
-  names.push(...newNames);
-  log('presets total: ' + names.length);
-  if (wasEmpty) { for (let s = 0; s < 3; s++) loadOn(s, 0); startCycles(); refreshHUD(); }
+  namesByScreen[s].push(...keys);
+}
+// Once any pool has content, load an initial preset onto each ready screen and
+// (once) start the auto-cycles.
+function maybeStart(){
+  for (let s = 0; s < 3; s++)
+    if (screen[s].idx < 0 && namesByScreen[s].length) loadOn(s, 0);
+  if (!cyclesStarted && namesByScreen.some(p => p.length)) { startCycles(); cyclesStarted = true; }
+  refreshHUD();
+}
+// Shared pool: every screen draws from the same set (original behaviour).
+window._addPresets = function(incoming){
+  for (let s = 0; s < 3; s++) addToPool(s, incoming);
+  log('presets (shared): ' + namesByScreen[0].length);
+  maybeStart();
 };
-(window._presetQueue || []).forEach(p => window._addPresets(p));
+// Per-screen pool: screen s draws ONLY from its own folder (no cross-repetition).
+window._addPresetsFor = function(s, incoming){
+  s = Math.max(0, Math.min(2, s | 0));
+  addToPool(s, incoming);
+  log('presets screen ' + (s + 1) + ': ' + namesByScreen[s].length);
+  maybeStart();
+};
+(window._presetQueue || []).forEach(item => {
+  if (item && item.presets) {
+    if (item.screen >= 0) window._addPresetsFor(item.screen, item.presets);
+    else window._addPresets(item.presets);
+  }
+});
 window._presetQueue = null;
 
 function resetMix(){

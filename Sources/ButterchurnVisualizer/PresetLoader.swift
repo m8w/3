@@ -24,18 +24,63 @@ final class PresetLoader {
 
     private static let batchSize = 200   // presets per evaluateJavaScript call
 
-    // Inject all bundled presets in shuffled batches.
+    // Inject presets in shuffled batches.
     // Call from WKNavigationDelegate.webView(_:didFinish:).
+    //
+    // Per-screen mode: if SCREEN1_PRESETS/SCREEN2_PRESETS/SCREEN3_PRESETS point at
+    // folders (or Resources/presets/screen1|2|3 exist with files), each screen
+    // gets its OWN pool — the three screens can never show the same preset.
+    // Otherwise every screen shares the whole bundled set (original behaviour).
     static func injectAll(into webView: WKWebView) {
         DispatchQueue.global(qos: .utility).async {
+            let sources = screenSources()
+            var perScreen: [[URL]] = [[], [], []]
+            var anyPerScreen = false
+            for s in 0..<3 {
+                guard let dir = sources[s] else { continue }
+                let urls = findPresetURLs(in: dir).shuffled()
+                perScreen[s] = urls
+                if !urls.isEmpty { anyPerScreen = true }
+            }
+
+            if anyPerScreen {
+                for s in 0..<3 where !perScreen[s].isEmpty {
+                    print("[PresetLoader] screen \(s + 1): \(perScreen[s].count) preset(s) (own pool)")
+                    injectBatch(urls: perScreen[s], offset: 0, screen: s, into: webView)
+                }
+                return
+            }
+
             let allURLs = findPresetURLs().shuffled()
             guard !allURLs.isEmpty else {
                 print("[PresetLoader] No bundled .json / .milk presets found in Resources/")
                 return
             }
-            print("[PresetLoader] Found \(allURLs.count) preset(s) — injecting in batches of \(batchSize)")
-            injectBatch(urls: allURLs, offset: 0, into: webView)
+            print("[PresetLoader] Found \(allURLs.count) preset(s) — shared pool, batches of \(batchSize)")
+            injectBatch(urls: allURLs, offset: 0, screen: -1, into: webView)
         }
+    }
+
+    // Resolve the three per-screen preset folders: env override first, then a
+    // bundled Resources/presets/screenN folder if it actually holds presets.
+    private static func screenSources() -> [URL?] {
+        let env = ProcessInfo.processInfo.environment
+        func resolve(_ key: String, _ sub: String) -> URL? {
+            if let raw = env[key], !raw.isEmpty {
+                return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
+            }
+            if let base = Bundle.module.resourceURL {
+                let d = base.appendingPathComponent("presets").appendingPathComponent(sub)
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: d.path, isDirectory: &isDir), isDir.boolValue {
+                    return d
+                }
+            }
+            return nil
+        }
+        return [resolve("SCREEN1_PRESETS", "screen1"),
+                resolve("SCREEN2_PRESETS", "screen2"),
+                resolve("SCREEN3_PRESETS", "screen3")]
     }
 
     // MARK: - Hot folder (live injection)
@@ -132,7 +177,8 @@ final class PresetLoader {
 
     // MARK: - Private
 
-    private static func injectBatch(urls: [URL], offset: Int, into webView: WKWebView) {
+    // screen: -1 → shared pool (_addPresets); 0..2 → that screen's pool (_addPresetsFor).
+    private static func injectBatch(urls: [URL], offset: Int, screen: Int, into webView: WKWebView) {
         let slice = Array(urls[offset ..< min(offset + batchSize, urls.count)])
 
         var presets: [String: Any] = [:]
@@ -147,15 +193,17 @@ final class PresetLoader {
               let data    = try? JSONSerialization.data(withJSONObject: presets),
               let jsonStr = String(data: data, encoding: .utf8)
         else {
-            scheduleNext(urls: urls, offset: offset, into: webView)
+            scheduleNext(urls: urls, offset: offset, screen: screen, into: webView)
             return
         }
 
-        let js = "if(typeof window._addPresets==='function')window._addPresets(\(jsonStr));"
+        let js = screen >= 0
+            ? "if(typeof window._addPresetsFor==='function')window._addPresetsFor(\(screen),\(jsonStr));"
+            : "if(typeof window._addPresets==='function')window._addPresets(\(jsonStr));"
         DispatchQueue.main.async {
             webView.evaluateJavaScript(js) { _, err in
                 if let err { print("[PresetLoader] batch error: \(err)") }
-                scheduleNext(urls: urls, offset: offset, into: webView)
+                scheduleNext(urls: urls, offset: offset, screen: screen, into: webView)
             }
         }
     }
@@ -178,18 +226,19 @@ final class PresetLoader {
         }
     }
 
-    private static func scheduleNext(urls: [URL], offset: Int, into webView: WKWebView) {
+    private static func scheduleNext(urls: [URL], offset: Int, screen: Int, into webView: WKWebView) {
         let next = offset + batchSize
         guard next < urls.count else {
-            print("[PresetLoader] All \(urls.count) preset(s) injected")
+            let tag = screen >= 0 ? "screen \(screen + 1)" : "shared"
+            print("[PresetLoader] All \(urls.count) \(tag) preset(s) injected")
             return
         }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.15) {
-            injectBatch(urls: urls, offset: next, into: webView)
+            injectBatch(urls: urls, offset: next, screen: screen, into: webView)
         }
     }
 
-    /// Walk the entire Resources bundle tree and return URLs of every .json and .milk file.
+    /// Walk the entire Resources bundle tree (or PRESETS_ONLY) for the shared pool.
     private static func findPresetURLs() -> [URL] {
         // PRESETS_ONLY=/path → load ONLY that folder (isolated batch review),
         // ignoring the bundled presets entirely. Otherwise load the whole bundle.
@@ -202,7 +251,11 @@ final class PresetLoader {
         } else {
             return []
         }
+        return findPresetURLs(in: root)
+    }
 
+    /// Recursively collect every .json / .milk file under `root`.
+    private static func findPresetURLs(in root: URL) -> [URL] {
         guard let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: [.isRegularFileKey],

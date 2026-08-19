@@ -75,6 +75,7 @@ SINGLE_SCREEN=1 ./ButterchurnVisualizer.app/Contents/MacOS/ButterchurnVisualizer
 | `MONO_AUDIO=1` | Force mono capture (disables the stereo react toggle) |
 | `SINGLE_SCREEN=1` | Single-screen host instead of the 3-screen mixer |
 | `PRESETS_ONLY=/path` | Load only that folder (skip the bundled set) |
+| `SCREEN1_PRESETS` / `SCREEN2_PRESETS` / `SCREEN3_PRESETS` | Give each screen its own preset folder (per-screen pools) |
 
 ---
 
@@ -98,7 +99,7 @@ SINGLE_SCREEN=1 ./ButterchurnVisualizer.app/Contents/MacOS/ButterchurnVisualizer
 | `Space` | Pause / resume |
 
 The HUD bar is also fully clickable. Presets auto-cycle independently per screen
-(~27s / 33s / 39s), each jumping to a random preset across the whole set.
+every **~6 seconds (random 3–9s)**, each jumping to a random preset in its pool.
 
 **Mutation is momentary:** the rotation always loads clean, normal presets — every
 change resets to normal. `G` mutates only what's on screen right now and clears
@@ -147,6 +148,28 @@ Bring a saved set back:
 ./scripts/restore-visuals.sh --list
 ./scripts/restore-visuals.sh
 ```
+
+### Per-screen pools (less repetition)
+
+Each of the three screens can draw from its **own** pool of presets so they can
+never show the same thing. Build three all-different 5,000-preset folders in one
+go (15,000 total, zero overlap between screens):
+
+```
+./scripts/three-pools.sh
+```
+
+That fills `Resources/presets/screen1`, `screen2`, `screen3` and rebuilds. Or
+point each screen at any folder on disk without curating:
+
+```
+SCREEN1_PRESETS=/path/a SCREEN2_PRESETS=/path/b SCREEN3_PRESETS=/path/c \
+  MIDI=1 ./ButterchurnVisualizer.app/Contents/MacOS/ButterchurnVisualizer
+```
+
+If no per-screen folders are configured, all three screens share the whole
+bundled set (the original behaviour). Presets auto-cycle every **~6 seconds
+(randomly 3–9s)** per screen, independently.
 
 ---
 
@@ -199,7 +222,7 @@ Sources/ButterchurnVisualizer/
     └── presets/curated/       — bundled curated presets
 scripts/
 ├── build-app.sh · broadcast.sh · curate-and-bundle.sh
-├── fresh-visuals.sh · restore-visuals.sh
+├── fresh-visuals.sh · restore-visuals.sh · three-pools.sh
 ├── sn2_chaos8_runs.py         — the SN2 MIDI generator (see sn2_note_generator.md)
 └── BROADCAST.md · CURATE.md · sn2_note_generator.md
 ```
