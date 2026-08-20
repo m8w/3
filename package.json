@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "butterchurn": "^2.6.7",
+    "milkdrop-preset-converter": "^0.1.2",
+    "milkdrop-preset-utils": "^0.2.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
+}

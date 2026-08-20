@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<!--
+  curate_host.html — offline preset culling harness.
+
+  Loaded by Curator.swift (not the normal visualizer). Two globals are injected
+  at documentStart by Swift, read from the app bundle:
+     window.butterchurn                 (butterchurn.min.js)
+     window.milkdropPresetConverter     (milkdrop-preset-converter.min.js)
+
+  Swift drives it one preset at a time via callAsyncJavaScript:
+     const r = await window.__curate(milkText, cfg);
+  …where r = { ok, keep, score, metrics, preset }  (preset only when keep).
+
+  Each preset is converted (.milk → butterchurn JSON, incl. HLSL→GLSL), loaded,
+  and rendered for a short window with synthetic beat-driven audio. We sample the
+  canvas and score colorfulness + spatial contrast + temporal motion + temporal
+  colour change. Dull / static / black / white presets score ~0 and are dropped.
+-->
+<html lang="en">
+<head><meta charset="UTF-8">
+<style>
+  * { margin:0; padding:0; }
+  body { background:#000; overflow:hidden; }
+  canvas { display:block; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+function log(m){ try{ window.webkit.messageHandlers.log.postMessage('[curate] '+m); }catch(_){} }
+
+let butterchurn = window.butterchurn;
+if (butterchurn && !butterchurn.createVisualizer && butterchurn.default) butterchurn = butterchurn.default;
+
+let CONV = window.milkdropPresetConverter;
+if (CONV && CONV.default && !CONV.convertPreset) CONV = CONV.default;
+
+window.__curateReady = false;
+
+if (!butterchurn || !butterchurn.createVisualizer) {
+  log('FATAL: butterchurn missing');
+} else if (!CONV || !CONV.convertPreset) {
+  log('FATAL: milkdrop-preset-converter missing');
+} else {
+
+  // Render target — small is plenty for metrics and much faster to read back.
+  const RW = 320, RH = 240;
+  const SW = 64,  SH = 48;                 // sampling resolution
+  const canvas = document.getElementById('canvas');
+  canvas.width = RW; canvas.height = RH;
+  canvas.style.width = RW+'px'; canvas.style.height = RH+'px';
+
+  const sCanvas = document.createElement('canvas');
+  sCanvas.width = SW; sCanvas.height = SH;
+  const sctx = sCanvas.getContext('2d', { willReadFrequently: true });
+
+  const audioCtx = new AudioContext();
+  const viz = butterchurn.createVisualizer(audioCtx, canvas, { width: RW, height: RH, pixelRatio: 1 });
+
+  // ── synthetic audio ─────────────────────────────────────────────────────────
+  const FBINS = 1024;
+  const freqData = new Uint8Array(FBINS);
+  const timeData = new Uint8Array(FBINS);
+  function feed(t) {
+    // 2 Hz kick + offbeat snare + drifting tonal content → exercises bass/mid/treb.
+    const kick  = Math.pow(0.5 + 0.5*Math.sin(2*Math.PI*2.0*t), 4);
+    const snare = Math.pow(0.5 + 0.5*Math.sin(2*Math.PI*2.0*t + Math.PI), 6);
+    const hat   = 0.5 + 0.5*Math.sin(2*Math.PI*8.0*t);
+    for (let b = 0; b < FBINS; b++) {
+      const f = b / FBINS;                 // 0..1 low→high
+      let v;
+      if (f < 0.12)      v = 200*kick + 40;
+      else if (f < 0.5)  v = 150*(0.4 + 0.6*Math.abs(Math.sin(6.0*f + t*1.7))) * (0.5 + 0.5*snare);
+      else               v = 120*hat*(0.3 + 0.7*Math.abs(Math.sin(12.0*f - t*2.3)));
+      freqData[b] = Math.max(0, Math.min(255, v|0));
+    }
+    const amp = 60*(0.4 + 0.6*kick);
+    for (let i = 0; i < FBINS; i++)
+      timeData[i] = 128 + (amp*Math.sin(i*0.20 + t*9.0) + (snare*40)*Math.sin(i*0.9 + t*5.0))|0;
+  }
+  function render(t) { feed(t); viz.render({ frequencyData: freqData, timeByteData: timeData }); }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // ── per-frame metrics on the downscaled sample ───────────────────────────────
+  function frameMetrics(d) {
+    const n = SW*SH;
+    let sL=0, sL2=0, sR=0, sG=0, sB=0, sRg=0, sRg2=0, sYb=0, sYb2=0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r=d[i], g=d[i+1], b=d[i+2];
+      const L = 0.299*r + 0.587*g + 0.114*b;
+      sL += L; sL2 += L*L; sR += r; sG += g; sB += b;
+      const rg = Math.abs(r - g);
+      const yb = Math.abs(0.5*(r + g) - b);
+      sRg += rg; sRg2 += rg*rg; sYb += yb; sYb2 += yb*yb;
+    }
+    const mL = sL/n, vL = Math.max(0, sL2/n - mL*mL);
+    const mRg = sRg/n, vRg = Math.max(0, sRg2/n - mRg*mRg);
+    const mYb = sYb/n, vYb = Math.max(0, sYb2/n - mYb*mYb);
+    // Hasler–Süsstrunk colourfulness.
+    const colorfulness = Math.sqrt(vRg + vYb) + 0.3*Math.sqrt(mRg*mRg + mYb*mYb);
+    return { luma: mL, lumaStd: Math.sqrt(vL), colorfulness, rM: sR/n, gM: sG/n, bM: sB/n };
+  }
+  function lumaDiff(a, b) {
+    let s = 0, n = SW*SH;
+    for (let i = 0; i < a.length; i += 4) {
+      const la = 0.299*a[i] + 0.587*a[i+1] + 0.114*a[i+2];
+      const lb = 0.299*b[i] + 0.587*b[i+1] + 0.114*b[i+2];
+      s += Math.abs(la - lb);
+    }
+    return s / n;
+  }
+  function std(arr) {
+    const m = arr.reduce((a,b)=>a+b,0)/arr.length;
+    return Math.sqrt(arr.reduce((a,b)=>a+(b-m)*(b-m),0)/arr.length);
+  }
+
+  // ── the per-preset entry point Swift calls ───────────────────────────────────
+  window.__curate = async function (milkText, cfg) {
+    cfg = cfg || {};
+    const frames = cfg.frames || 30, fps = cfg.fps || 30, warm = cfg.warm || 6;
+    const dt = 1000 / fps;
+    const th = cfg.thresholds || {};
+
+    let preset;
+    try { preset = await CONV.convertPreset(milkText); }
+    catch (e) { return { ok:false, reason:'convert:'+(e&&e.message||e) }; }
+    if (!preset || !preset.baseVals) return { ok:false, reason:'empty' };
+
+    // Fast bulk mode: convert and keep everything, no rendering/scoring.
+    if (cfg.noRender) return { ok:true, keep:true, score:0, preset: JSON.stringify(preset) };
+
+    try { viz.loadPreset(preset, 0.0); }
+    catch (e) { return { ok:false, reason:'load:'+(e&&e.message||e) }; }
+
+    let t0 = performance.now() / 1000;
+    try {
+      for (let i = 0; i < warm; i++) { render(t0 + i/fps); await sleep(dt); }
+    } catch (e) { return { ok:false, reason:'warm:'+(e&&e.message||e) }; }
+
+    const samples = [], colsR = [], colsG = [], colsB = [];
+    let prev = null, motionSum = 0, diffs = 0;
+    try {
+      for (let f = 0; f < frames; f++) {
+        render(t0 + (warm + f)/fps);
+        sctx.drawImage(canvas, 0, 0, SW, SH);
+        const d = sctx.getImageData(0, 0, SW, SH).data;
+        const m = frameMetrics(d);
+        samples.push(m); colsR.push(m.rM); colsG.push(m.gM); colsB.push(m.bM);
+        if (prev) { motionSum += lumaDiff(prev, d); diffs++; }
+        prev = new Uint8ClampedArray(d);
+        await sleep(dt);
+      }
+    } catch (e) { return { ok:false, reason:'render:'+(e&&e.message||e) }; }
+
+    const avg = k => samples.reduce((s,x)=>s+x[k],0)/samples.length;
+    const lumaStd      = avg('lumaStd');
+    const colorfulness = avg('colorfulness');
+    const meanLuma     = avg('luma');
+    const motion       = diffs ? motionSum/diffs : 0;
+    const tcc          = (std(colsR) + std(colsG) + std(colsB)) / 3;  // temporal colour change
+
+    // Solid black / solid white / flat → reject outright.
+    const degenerate = ((meanLuma < 4 || meanLuma > 251) && lumaStd < 4) || (lumaStd < 1.5 && motion < 0.5);
+
+    const score = degenerate ? 0 : (
+        0.30 * Math.min(lumaStd, 60)/60 +
+        0.30 * Math.min(colorfulness, 80)/80 +
+        0.22 * Math.min(motion, 40)/40 +
+        0.18 * Math.min(tcc, 30)/30
+      ) * 100;
+
+    const keep = !degenerate
+      && score        >= (th.minScore        ?? 22)
+      && motion       >= (th.minMotion       ?? 1.2)
+      && colorfulness >= (th.minColorfulness ?? 8)
+      && (lumaStd     >= (th.minLumaStd      ?? 5) || tcc >= (th.minTcc ?? 6));
+
+    const out = { ok:true, keep, score:+score.toFixed(2),
+      metrics:{ lumaStd:+lumaStd.toFixed(2), colorfulness:+colorfulness.toFixed(2),
+                meanLuma:+meanLuma.toFixed(2), motion:+motion.toFixed(2), tcc:+tcc.toFixed(2) } };
+    if (keep) out.preset = JSON.stringify(preset);
+    return out;
+  };
+
+  window.__curateReady = true;
+  log('ready');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<!--
+  butterchurn_host.html — Milkdrop visualizer inside WKWebView.
+
+  Preset sources: Swift PresetLoader injects all 1754 bundled .json presets.
+
+  Audio: Swift AudioQueue → BlackHole 2ch → window._updateQ([32 floats])
+         Our 32 values are spread into a full Uint8Array(1024) frequency buffer
+         and passed directly to viz.render({frequencyData}) so butterchurn's
+         internal audio analysis (bass/mid/treb/vol uniforms + GLSL) sees them.
+
+  Keys: N/→ next · P/← prev · B hard-cut · Space pause · H hud · F fullscreen
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; width:100vw; height:100vh; }
+canvas { display:block; width:100%; height:100%; }
+
+#hud {
+  position:fixed; bottom:0; left:0; right:0;
+  padding:10px 18px 16px;
+  background:linear-gradient(transparent, rgba(0,0,0,0.75));
+  display:flex; flex-direction:column; gap:6px;
+  pointer-events:none; z-index:9999;
+}
+#hud.hidden { display:none; }
+#spectrum { display:flex; align-items:flex-end; gap:3px; height:18px; }
+.spec-bar { width:7px; background:rgba(255,255,255,0.5); border-radius:2px 2px 0 0; min-height:2px; }
+#preset-line { color:#fff; font:13px/1.5 'SF Mono',monospace; text-shadow:0 1px 6px #000; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#hint-line   { color:rgba(255,255,255,0.7); font:11px/1.4 'SF Mono',monospace; text-shadow:0 1px 4px #000; }
+#level-rail  { height:3px; background:rgba(255,255,255,0.15); border-radius:2px; overflow:hidden; }
+#level-fill  { height:100%; width:0%; background:#fff; border-radius:2px; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="hud">
+  <div id="spectrum">
+    <div class="spec-bar" id="sb0"></div><div class="spec-bar" id="sb1"></div>
+    <div class="spec-bar" id="sb2"></div><div class="spec-bar" id="sb3"></div>
+    <div class="spec-bar" id="sb4"></div><div class="spec-bar" id="sb5"></div>
+    <div class="spec-bar" id="sb6"></div><div class="spec-bar" id="sb7"></div>
+  </div>
+  <div id="preset-line">Loading presets…</div>
+  <div id="hint-line">N=next · P=prev · B=cut · Space=pause · H=hud</div>
+  <div id="level-rail"><div id="level-fill"></div></div>
+</div>
+
+<script>
+window._presetQueue = [];
+window._addPresets  = function(p) { window._presetQueue.push(p); };
+</script>
+
+<!-- ── MAIN MODULE ─────────────────────────────────────────────────────────── -->
+<script type="module">
+
+const $ = id => document.getElementById(id);
+const canvas     = $('canvas');
+const presetLine = $('preset-line');
+const hintLine   = $('hint-line');
+const levelFill  = $('level-fill');
+const hud        = $('hud');
+const specBars   = Array.from({length:8}, (_,i) => $('sb'+i));
+
+// butterchurn.min.js is injected by WebViewContainer via URLSession (Swift process
+// has full network access; WKWebView content process is sandboxed on macOS 15/26).
+// window.butterchurn is set by the UMD bundle before this module runs.
+let butterchurn = window.butterchurn;
+// UMD builds sometimes expose the module namespace; unwrap the default export if needed.
+if (butterchurn && !butterchurn.createVisualizer && butterchurn.default) {
+  butterchurn = butterchurn.default;
+}
+if (!butterchurn || !butterchurn.createVisualizer) {
+  presetLine.textContent = 'butterchurn not loaded — check Swift console for fetch errors';
+  log('ERROR: window.butterchurn missing or incomplete: ' + JSON.stringify(butterchurn && Object.keys(butterchurn)));
+  throw new Error('butterchurn unavailable');
+}
+
+let hudVisible = true, hudTimer = null;
+
+function showHUD(text) {
+  presetLine.textContent = text;
+  if (!hudVisible) return;   // don't flash HUD back if user hid it
+  hud.classList.remove('hidden');
+}
+setTimeout(() => hintLine.style.display = 'none', 12000);
+
+function log(msg) {
+  try { window.webkit.messageHandlers.log.postMessage('[JS] ' + msg); } catch(_) {}
+}
+
+// ── EEL fallback for presets that have no equations at all ────────────────────
+const PF_INIT =
+  'low=0;mlo=0;mhi=0;high=0;centroid=0.5;' +
+  'flux_lo=0;flux_hi=0;flux_mid=0;' +
+  'low_att=0;high_att=0;mid_att=0;spin_acc=0;' +
+  'dq_lo=0;dq_hi=0;dq_mid=0;dq_air=0;';
+
+const PER_FRAME =
+  'low=(q1+q2+q3+q4+q5+q6+q7+q8)*0.125;' +
+  'mlo=(q9+q10+q11+q12+q13+q14+q15+q16)*0.125;' +
+  'mhi=(q17+q18+q19+q20+q21+q22+q23+q24)*0.125;' +
+  'high=(q25+q26+q27+q28+q29+q30+q31+q32)*0.125;' +
+  'low_att=low_att*0.75+low*0.25;' +
+  'mid_att=mid_att*0.78+mlo*0.22+mhi*0.10;' +
+  'high_att=high_att*0.65+high*0.35;' +
+  '_denom=low+mlo+mhi+high+0.001;' +
+  'centroid=(low*0.125+mlo*0.375+mhi*0.625+high*0.875)/_denom;' +
+  'flux_lo=abs(q1-q2)+abs(q3-q4)+abs(q5-q6)+abs(q7-q8);' +
+  'flux_hi=abs(q25-q26)+abs(q27-q28)+abs(q29-q30)+abs(q31-q32);' +
+  'flux_mid=abs(q12-q13)+abs(q14-q15)+abs(q20-q21)+abs(q22-q23);' +
+  'dq_lo=q8-q9;dq_mid=q16-q17;dq_hi=q20-q21;dq_air=q28-q29;' +
+  'spin_acc=spin_acc*0.92+dq_lo*0.08;' +
+  'decay=0.965-low_att*0.018;' +
+  'zoom=1.012+low_att*0.055-high_att*0.025;' +
+  'rot=0.005+spin_acc*0.4+centroid*0.015*sin(time*0.7);' +
+  'warp=1.00+q1*0.20+q32*0.15+flux_hi*1.20;' +
+  'dx=dq_lo*0.012+dq_air*0.005*sin(time*1.1);' +
+  'dy=dq_hi*0.012+dq_mid*0.005*cos(time*0.9);' +
+  'wave_r=0.4+bass*0.6;wave_g=0.3+mid*0.7;wave_b=0.5+treb*0.5;' +
+  'wave_x=0.5+dq_lo*0.15;wave_y=0.5+dq_hi*0.15;' +
+  'wave_scale=0.7+high_att*1.3;wave_a=0.5+mid_att*0.5;';
+
+const PER_PIXEL =
+  'warp=warp+q1*0.10*sin(rad*2.5+time*0.4);' +
+  'warp=warp+(q16+q17)*0.06*cos(ang*3.0+time*0.9);' +
+  'warp=warp+q32*0.08*sin(x*14.0+y*14.0+time*2.5)*rad*rad;' +
+  'zoom=zoom+low_att*rad*0.06;' +
+  'rot=rot+flux_hi*0.08*sin(rad*4.0);' +
+  'dx=dx+dq_lo*sin(ang)*0.010+q1*sin(rad*2.0+time*0.3)*0.020;' +
+  'dy=dy+dq_hi*cos(ang)*0.010+q2*cos(rad*2.0+time*0.3)*0.020;' +
+  'dx=dx+(q8-q9)*0.010;dy=dy+(q20-q21)*0.010;' +
+  'dx=dx+q32*sin(x*18.0+time*3.2)*0.006;' +
+  'dy=dy+q31*cos(y*18.0+time*3.2)*0.006;';
+
+// patchPreset strategy:
+//  • GLSL shader presets (warp/comp strings)  → return unchanged; shader drives animation
+//  • Native EEL2 (per_frame_eqs_eel / perFrameEQs) → append our microtonal equations
+//  • Pre-compiled JS (frame_eqs_str) → STRIP these: some use 'return' as a variable
+//    name which causes SyntaxError in butterchurn's new Function() constructor.
+//    Replace with our EEL2 equations; baseVals still vary per preset (visual diversity).
+function patchPreset(base) {
+  // GLSL shader presets — keep entirely as-is.
+  if (typeof base.warp === 'string' && base.warp.includes('shader_body')) return base;
+
+  // Native EEL2 — append our equations so preset motion + microtonal audio both run.
+  const pfEEL = base.per_frame_eqs_eel || base.perFrameEQs || '';
+  const ppEEL = base.per_pixel_eqs_eel || base.perPixelEQs || '';
+  if (pfEEL.trim()) {
+    const pfKey   = 'perFrameEQs' in base ? 'perFrameEQs' : 'per_frame_eqs_eel';
+    const ppKey   = 'perPixelEQs' in base ? 'perPixelEQs' : 'per_pixel_eqs_eel';
+    const initKey = 'initEQs'     in base ? 'initEQs'     : 'init_eqs_eel';
+    return {
+      ...base,
+      [initKey]: (base[initKey] || '') + PF_INIT,
+      [pfKey]:   pfEEL + PER_FRAME,
+      [ppKey]:   ppEEL + PER_PIXEL,
+    };
+  }
+
+  // Pre-compiled format (frame_eqs_str / pixel_eqs_str) — strip and replace.
+  const { init_eqs_str, frame_eqs_str, pixel_eqs_str, ...rest } = base;
+  return { ...rest, per_frame_eqs_eel: PER_FRAME, per_pixel_eqs_eel: PER_PIXEL };
+}
+
+// ── visualizer ────────────────────────────────────────────────────────────────
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+const audioCtx = new AudioContext();
+const viz = butterchurn.createVisualizer(audioCtx, canvas, {
+  width: canvas.width, height: canvas.height,
+  pixelRatio: window.devicePixelRatio || 1,
+});
+
+// ── preset pool + navigation ──────────────────────────────────────────────────
+const allPresets = {};
+const names      = [];
+let currentIdx   = -1;
+const CYCLE_MS   = 30_000;   // 30 s — full 1754-preset rotation ≈ 14.6 hours
+
+function tryLoad(idx, blend) {
+  if (!names.length) return false;
+  const name = names[idx];
+  try {
+    viz.loadPreset(patchPreset(allPresets[name]), blend);
+    currentIdx = idx;
+    log('preset: ' + name);
+    return true;
+  } catch(e) {
+    log('preset FAIL "' + name + '": ' + e.message);
+    return false;
+  }
+}
+
+function loadNext(blend = 2.7) {
+  const n = names.length;
+  if (!n) return;
+  const start = currentIdx < 0 ? Math.floor(Math.random() * n) : (currentIdx + 1) % n;
+  for (let i = 0; i < n; i++) {
+    const idx = (start + i) % n;
+    if (tryLoad(idx, blend)) { showHUD('→  ' + names[idx]); return; }
+  }
+}
+
+function loadPrev(blend = 2.7) {
+  const n = names.length;
+  if (!n) return;
+  const start = currentIdx <= 0 ? n - 1 : currentIdx - 1;
+  for (let i = 0; i < n; i++) {
+    const idx = ((start - i) % n + n) % n;
+    if (tryLoad(idx, blend)) { showHUD('←  ' + names[idx]); return; }
+  }
+}
+
+let cycleTimer = setInterval(loadNext, CYCLE_MS);
+function resetCycle() { clearInterval(cycleTimer); cycleTimer = setInterval(loadNext, CYCLE_MS); }
+
+// ── audio: build a real frequency buffer and pass it to viz.render() ──────────
+// butterchurn.render({frequencyData, timeByteData}) feeds butterchurn's internal
+// audio analysis — this is the path that drives bass/mid/treb/vol GLSL uniforms
+// used by all 1754 native presets. Simply writing to globalVars is not enough.
+
+const FREQ_BINS = 1024;
+const freqData  = new Uint8Array(FREQ_BINS);   // frequency magnitude (0-255)
+const timeData  = new Uint8Array(FREQ_BINS);   // time-domain waveform
+timeData.fill(128);                             // 128 = silence in time domain
+
+let lastQ = new Float32Array(32);
+
+function updateAudio(q) {
+  for (let i = 0; i < 32; i++) lastQ[i] = q[i];
+
+  // Spread 32 microtonal bins across 1024 frequency bins with linear interpolation.
+  // Lower half of the spectrum gets more detail (log-ish perceptual weighting).
+  for (let b = 0; b < FREQ_BINS; b++) {
+    const frac = (b / FREQ_BINS) * 31;   // 0 .. 31
+    const lo   = Math.floor(frac) | 0;
+    const hi   = Math.min(lo + 1, 31);
+    const t    = frac - lo;
+    freqData[b] = ((q[lo] * (1 - t) + q[hi] * t) * 220) | 0;  // 0-220 headroom
+  }
+
+  // Also write into globalVars for any EEL-based presets that read q1..q32 directly.
+  const gv = viz.activePreset?.globalVars
+           ?? viz.preset?.globalVars
+           ?? viz._renderer?.activePreset?.globalVars
+           ?? null;
+  if (gv) {
+    for (let i = 0; i < 32; i++) gv['q' + (i + 1)] = q[i];
+  }
+}
+
+// ── render loop ───────────────────────────────────────────────────────────────
+let isPaused = false;
+(function render() {
+  requestAnimationFrame(render);
+  if (isPaused) return;
+  if (hudVisible) {
+    for (let i = 0; i < 8; i++) specBars[i].style.height = (lastQ[i] * 14).toFixed(1) + 'px';
+    levelFill.style.width = ((lastQ[0]+lastQ[1]+lastQ[2]+lastQ[3]) * 25).toFixed(1) + '%';
+  }
+  // Pass our frequency buffer directly — butterchurn uses it for bass/mid/treb/vol.
+  viz.render({ frequencyData: freqData, timeByteData: timeData });
+})();
+
+// ── Swift bridges ─────────────────────────────────────────────────────────────
+window._updateQ = q => { updateAudio(q); };
+
+window._addPresets = function(incoming) {
+  const newNames = Object.keys(incoming);
+  if (!newNames.length) return;
+  const wasEmpty = names.length === 0;
+  Object.assign(allPresets, incoming);
+  names.push(...newNames);
+  showHUD(names.length + ' presets ready', 4000);
+  log('presets total: ' + names.length);
+  if (wasEmpty) loadNext(0);
+};
+
+(window._presetQueue || []).forEach(p => window._addPresets(p));
+window._presetQueue = null;
+
+window._viz = viz;
+
+// ── Swift key bridge (called directly from Swift evaluateJavaScript) ──────────
+window._keyCommand = function(cmd) {
+  switch(cmd) {
+    case 'next':  loadNext();    resetCycle(); showHUD('→  ' + (names[currentIdx]||'')); break;
+    case 'prev':  loadPrev();    resetCycle(); showHUD('←  ' + (names[currentIdx]||'')); break;
+    case 'cut':   loadNext(0);   resetCycle(); break;
+    case 'pause': isPaused=!isPaused; showHUD(isPaused?'⏸ paused':'▶ playing'); break;
+    case 'hud':   hudVisible=!hudVisible; hud.classList.toggle('hidden',!hudVisible); break;
+  }
+};
+
+// ── keyboard (fallback for when WKWebView has focus) ─────────────────────────
+document.addEventListener('keydown', e => {
+  switch(e.key) {
+    case 'n': case 'N': case 'ArrowRight': e.preventDefault(); window._keyCommand('next'); break;
+    case 'p': case 'P': case 'ArrowLeft':  e.preventDefault(); window._keyCommand('prev'); break;
+    case 'b': case 'B': e.preventDefault(); window._keyCommand('cut'); break;
+    case ' ': e.preventDefault(); window._keyCommand('pause'); break;
+    case 'h': case 'H': window._keyCommand('hud'); break;
+  }
+});
+
+// ── resize ────────────────────────────────────────────────────────────────────
+new ResizeObserver(() => {
+  canvas.width=window.innerWidth; canvas.height=window.innerHeight;
+  viz.setRendererSize(canvas.width, canvas.height);
+}).observe(document.body);
+
+log('main module ready');
+</script>
+
+</body>
+</html>
