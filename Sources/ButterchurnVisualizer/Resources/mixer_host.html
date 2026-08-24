@@ -93,7 +93,7 @@
     <button class="mx" data-act="hide">GRAPHICS ONLY ⤢</button>
   </div>
 </div>
-<div id="ginfo">＋/− polarity · weight slider · ◀▶ preset · C blend · R react (freq⇄stereo) · G mutate · 1/2/3 then X reject · H hide bar · F fill screen (not ⌃⌘F)</div>
+<div id="ginfo">＋/− polarity · weight slider · ◀▶ preset · C blend · R react (freq⇄stereo) · 1/2/3 select then G mutate (MILD→WILD→EXTREME→CHAOTIC) or X reject · H hide bar · F fill screen (not ⌃⌘F)</div>
 
 <!-- Preset queue shim (PresetLoader may inject before the module runs) -->
 <script>
@@ -164,16 +164,35 @@ function patchPreset(base) {
            per_frame_eqs_eel: PER_FRAME+midiEELframe(), per_pixel_eqs_eel: PER_PIXEL };
 }
 
-// ── preset mutation: perturb params + equation constants for fresh looks ──────
-// Only standalone float literals are jittered (numbers with a decimal point,
-// never those embedded in identifiers like a.q29), so syntax can't break.
-let mutateAmt = 0, mutateLevel = 0;
-const MUTATE_AMTS = [0, 0.12, 0.25], MUTATE_NAMES = ['OFF','SUBTLE','WILD'];
+// ── preset mutation: nonlinear perturbation of params + equation constants ────
+// Five levels of increasingly nonlinear modulation. Only standalone float
+// literals are jittered (numbers with a decimal point, never those embedded in
+// identifiers like a.q29), so syntax can't break. Everything is finite-guarded
+// and the render loop recovers a broken screen, so even CHAOTIC can't freeze.
+//   MILD    — gentle linear jitter
+//   WILD    — + sign-preserving power-curve warp (|x|^p)
+//   EXTREME — + heavy-tailed spikes
+//   CHAOTIC — + rare sign flips (fully nonlinear, unpredictable)
+const MUTATE_AMTS  = [0, 0.10, 0.22, 0.40, 0.70];
+const MUTATE_NAMES = ['OFF','MILD','WILD','EXTREME','CHAOTIC'];
 const MUT_SKIP = new Set(['rating']);
-function jitNum(v, a){ return v * (1 + (Math.random()*2 - 1) * a); }
+function jitNum(v, a){
+  if (a <= 0) return v;
+  let x = v * (1 + (Math.random()*2 - 1) * a);              // linear multiplicative jitter
+  if (a >= 0.22) {                                           // WILD+: sign-preserving power warp
+    const s = x < 0 ? -1 : 1;
+    const p = 1 + (Math.random()*2 - 1) * a * 0.7;
+    x = s * Math.pow(Math.abs(x), p);
+  }
+  if (a >= 0.40 && Math.random() < a * 0.35)                // EXTREME+: heavy-tailed spike
+    x += (Math.random()*2 - 1) * a * (Math.abs(v) + 0.4);
+  if (a >= 0.70 && Math.random() < 0.10)                    // CHAOTIC: rare sign flip
+    x = -x;
+  return Number.isFinite(x) ? x : v;
+}
 function jitFloats(code, a){
   return code.replace(/(?<![\w.])(\d*\.\d+|\d+\.\d*)(?![\w.])/g, m => {
-    const v = parseFloat(m) * (1 + (Math.random()*2 - 1) * a);
+    const v = jitNum(parseFloat(m), a);
     return Number.isFinite(v) ? v.toFixed(5) : m;
   });
 }
@@ -196,18 +215,19 @@ function mutatePreset(src, a){
     if (typeof p[k] === 'string') p[k] = jitFloats(p[k], a * 0.6);   // gentler on equations
   return p;
 }
-// Mutation is a MOMENTARY, on-demand effect — it never persists. The auto-cycle
-// and manual navigation always load the clean, unmutated preset, so every preset
-// change resets values back to normal. Pressing G re-renders the CURRENT presets
-// with a jittered variation; it clears itself the next time each screen cycles.
-function mutateCurrent(){
-  for (let s = 0; s < 3; s++){
-    const idx = screen[s].idx;
-    if (idx < 0 || idx >= namesByScreen[s].length) continue;
-    const base = allPresets[namesByScreen[s][idx]];
-    try { viz[s].loadPreset(patchPreset(mutateAmt > 0 ? mutatePreset(base, mutateAmt) : base), 1.5); }
-    catch(e) { try { viz[s].loadPreset(patchPreset(base), 0); } catch(_){} }   // bad jitter → clean
-  }
+// Mutation is now PER SCREEN and persistent: each screen keeps its own level
+// (screen[s].mutLevel) and applies it to every preset it loads. Screens left at
+// OFF stay clean. applyPreset falls back to the clean preset if a jitter throws.
+function mutAmt(s){ return MUTATE_AMTS[screen[s].mutLevel] || 0; }
+function applyPreset(s, base, blend){
+  const a = mutAmt(s);
+  try { viz[s].loadPreset(patchPreset(a > 0 ? mutatePreset(base, a) : base), blend); return true; }
+  catch(e){ try { viz[s].loadPreset(patchPreset(base), 0); return true; } catch(_){ return false; } }
+}
+function reloadScreen(s, blend){
+  const idx = screen[s].idx;
+  if (idx < 0 || idx >= namesByScreen[s].length) return;
+  applyPreset(s, allPresets[namesByScreen[s][idx]], blend);
 }
 
 // ── audio: shared 32-bin → 1024-bin frequency + waveform buffers ──────────────
@@ -271,9 +291,9 @@ const allPresets = {};
 const namesByScreen = [[], [], []];
 const rejected = new Set();   // names culled live via the reject key (X)
 const screen = [
-  { idx:-1, sign:+1, weight:0.85, band:'bass' },
-  { idx:-1, sign:+1, weight:0.70, band:'mid'  },
-  { idx:-1, sign:+1, weight:0.70, band:'treb' },
+  { idx:-1, sign:+1, weight:0.85, band:'bass', mutLevel:0 },
+  { idx:-1, sign:+1, weight:0.70, band:'mid',  mutLevel:0 },
+  { idx:-1, sign:+1, weight:0.70, band:'treb', mutLevel:0 },
 ];
 let selected = 0, autoMix = true, paused = false, hudVisible = true;
 
@@ -293,8 +313,7 @@ function loadOn(s, blend) {
       const nm = pool[idx];
       if (rejected.has(nm)) continue;
       if (pass === 0 && busy.has(nm)) continue;
-      try { viz[s].loadPreset(patchPreset(allPresets[nm]), blend); screen[s].idx = idx; return true; }
-      catch(e) { /* try next */ }
+      if (applyPreset(s, allPresets[nm], blend)) { screen[s].idx = idx; return true; }
     }
   }
   return false;
@@ -308,8 +327,7 @@ function stepOn(s, dir, blend) {
     const idx = (start + dir*i + n*1000) % n;
     const nm = pool[idx];
     if (rejected.has(nm)) continue;
-    try { viz[s].loadPreset(patchPreset(allPresets[nm]), blend); screen[s].idx = idx; refreshHUD(); return; }
-    catch(e) {}
+    if (applyPreset(s, allPresets[nm], blend)) { screen[s].idx = idx; refreshHUD(); return; }
   }
 }
 
@@ -614,14 +632,15 @@ function refreshHUD(){
     p.box.classList.toggle('sel', s === selected);
     p.sgn.textContent = add ? '＋ ADD' : '− SUB';
     p.sgn.className = 'mx sgn ' + (add ? 'add' : 'sub');
-    p.nm.textContent = currentName(s) || '…';
+    const nm = currentName(s) || '…', ml = screen[s].mutLevel;
+    p.nm.textContent = ml > 0 ? '⚡' + MUTATE_NAMES[ml] + ' · ' + nm : nm;
     p.wt.value = screen[s].weight;
     p.wv.textContent = screen[s].weight.toFixed(2);
   }
   autoBtn.textContent = 'AUTO-MIX: ' + (autoMix ? 'ON' : 'OFF');
   blendBtn.textContent = 'BLEND: ' + BLEND_NAMES[blendMode];
   reactBtn.textContent = 'REACT: ' + (reactMode === 'stereo' ? 'L/MID/R' : 'LOW/MID/HIGH');
-  mutateBtn.textContent = 'MUTATE: ' + MUTATE_NAMES[mutateLevel];
+  mutateBtn.textContent = 'MUTATE S' + (selected + 1) + ': ' + MUTATE_NAMES[screen[selected].mutLevel];
 }
 function tickHUD(){
   for (let s = 0; s < 3; s++)
@@ -704,6 +723,7 @@ window._presetQueue = null;
 function resetMix(){
   screen[0].sign = screen[1].sign = screen[2].sign = +1;
   screen[0].weight = 0.85; screen[1].weight = 0.70; screen[2].weight = 0.70;
+  for (let s = 0; s < 3; s++) if (screen[s].mutLevel !== 0) { screen[s].mutLevel = 0; reloadScreen(s, 0); }
   autoMix = true; refreshHUD();
 }
 
@@ -718,9 +738,9 @@ window._keyCommand = function(cmd){
     case 'wup':  screen[selected].weight = Math.min(1.6, screen[selected].weight + 0.1); refreshHUD(); break;
     case 'auto': autoMix = !autoMix; refreshHUD(); break;
     case 'react': reactMode = reactMode === 'bands' ? 'stereo' : 'bands'; refreshHUD(); showBar(); break; // R
-    case 'mutate': // G — momentary: cycle strength and mutate the CURRENT look (clears on next cycle)
-      mutateLevel = (mutateLevel + 1) % MUTATE_AMTS.length; mutateAmt = MUTATE_AMTS[mutateLevel];
-      mutateCurrent();
+    case 'mutate': // G — cycle the SELECTED screen's mutation level (OFF→MILD→WILD→EXTREME→CHAOTIC)
+      screen[selected].mutLevel = (screen[selected].mutLevel + 1) % MUTATE_AMTS.length;
+      reloadScreen(selected, 1.2);   // re-render just this screen with its new level
       refreshHUD(); showBar(); break;
     case 'blend':     blendMode = (blendMode + 1) % BLEND_NAMES.length; refreshHUD(); showBar(); break; // C
     case 'blendPrev': blendMode = (blendMode - 1 + BLEND_NAMES.length) % BLEND_NAMES.length; refreshHUD(); showBar(); break;

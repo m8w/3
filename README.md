@@ -91,7 +91,7 @@ SINGLE_SCREEN=1 ./ButterchurnVisualizer.app/Contents/MacOS/ButterchurnVisualizer
 | `M` | Toggle audio-reactive auto-mix |
 | `C` | Cycle blend mode |
 | `R` | Toggle reactivity: low/mid/high ⇄ left/mid/right (stereo) |
-| `G` | Momentary preset mutation (OFF → SUBTLE → WILD on the current look) |
+| `G` | Cycle the selected screen's mutation: OFF → MILD → WILD → EXTREME → CHAOTIC (nonlinear, per-screen) |
 | `X` | Reject the selected screen's preset (culls it for good) |
 | `0` | Reset the mix to defaults |
 | `F` | Fill screen on the current Space (not ⌃⌘F — that Space freezes under capture) |
@@ -101,9 +101,13 @@ SINGLE_SCREEN=1 ./ButterchurnVisualizer.app/Contents/MacOS/ButterchurnVisualizer
 The HUD bar is also fully clickable. Presets auto-cycle independently per screen
 every **~6 seconds (random 3–9s)**, each jumping to a random preset in its pool.
 
-**Mutation is momentary:** the rotation always loads clean, normal presets — every
-change resets to normal. `G` mutates only what's on screen right now and clears
-itself the next time each screen cycles.
+**Mutation is per-screen.** Select a screen (`1`/`2`/`3`) and press `G` to cycle
+its mutation level — OFF → MILD → WILD → EXTREME → CHAOTIC — using increasingly
+nonlinear perturbation (power-curve warps, heavy-tailed spikes, sign flips). Each
+screen keeps its own level and applies it to every preset it loads; screens left
+at OFF stay clean. Everything is finite-guarded and the render loop recovers a
+broken screen, so even CHAOTIC can't freeze the stream. `0` resets all screens to
+clean.
 
 ---
 
