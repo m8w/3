@@ -173,7 +173,7 @@ function patchPreset(base) {
 //   WILD    — + sign-preserving power-curve warp (|x|^p)
 //   EXTREME — + heavy-tailed spikes
 //   CHAOTIC — + rare sign flips (fully nonlinear, unpredictable)
-const MUTATE_AMTS  = [0, 0.10, 0.22, 0.40, 0.70];
+const MUTATE_AMTS  = [0, 0.12, 0.28, 0.55, 1.00];
 const MUTATE_NAMES = ['OFF','MILD','WILD','EXTREME','CHAOTIC'];
 const MUT_SKIP = new Set(['rating']);
 function jitNum(v, a){
@@ -213,6 +213,12 @@ function mutatePreset(src, a){
   }
   for (const k of ['init_eqs_str','frame_eqs_str','pixel_eqs_str'])
     if (typeof p[k] === 'string') p[k] = jitFloats(p[k], a * 0.6);   // gentler on equations
+  // The warp + comp GLSL shaders carry most of the visual character — jitter
+  // their float constants too so EXTREME/CHAOTIC actually look different, not
+  // just a nudged version of the same preset. Only decimal literals are touched
+  // (never ints/swizzles) so the shaders stay valid and compile.
+  for (const k of ['warp','comp'])
+    if (typeof p[k] === 'string') p[k] = jitFloats(p[k], a * 0.5);
   return p;
 }
 // Mutation is now PER SCREEN and persistent: each screen keeps its own level
