@@ -1,7 +1,27 @@
 #!/usr/bin/env python3
 """
-sn2_chaos8_runs.py — 8-channel random note generator + a single wandering
-"run" melody line, for Novation Supernova II.
+sn2_400kb_series.py — sn2_chaos8_runs.py, plus real melodic material pulled
+from 18 found MIDI files (all ~400KB, hence the name) instead of purely
+algorithmic runs. Sibling of sn2_300kb_series.py, built the same way from a
+different batch of source files -- each "series" is its own independent
+line, not layered on top of the others.
+
+FOUND-FLOOR PHRASES: found_floor_phrases_400kb.json (built once from x1 ghost
+time 3.mid, wait for it 2.mid, solaris three.mid, seer elf 2.mid, re-ramped
+again 1.mid, rapid ravbmps/ramps/rammmps 5.mid, now is won backwards 3a.mid,
+New Presets 3 reaper x.mid, midi_export 11-3-18.mid, midi_expor 2t.mid, Korg
+and Supernova II played with same midi feed session 1 MIDI.mid, finding the
+bottom of the floor a.mid, dont be pickled(.mid / again.mid), Default (3).mid,
+and cell effects t3.mid) holds ~11,700 short melodic phrases as
+relative-semitone patterns, up to 700 drawn evenly from each source file
+(the three "rapid ramp*" files turned out to be near-duplicates of each
+other, so they collapsed to far fewer unique phrases combined -- the dedup
+step catches that automatically). Both the SN2's wandering run and a new
+korg run draw from this pool through a PhraseDeck: a shuffled, non-repeating
+draw -- nothing plays twice until the whole deck has been dealt once, then
+it reshuffles and starts over. Sameness is the enemy; this is how the script
+avoids it for as long as the pool holds out. Falls back to the old
+algorithmic pattern generator only if the JSON pool can't be found/loaded.
 
 This copy adds a VIRTUAL MIDI FAN-OUT so the ButterchurnVisualizer can read the
 exact same stream and lock its visuals to it. Everything is sent both to the
@@ -29,12 +49,14 @@ the visualizer with MIDI=1 (it matches "visuals"/"sn2") and both stay in sync.
 Ctrl+C (or 'q') to stop — sends All Notes Off and centers Pitch Bend first.
 
 Install:  pip install python-rtmidi
-Run:      python3 sn2_chaos8_runs.py
+Run:      python3 sn2_400kb_series.py
 """
 import rtmidi
 import time
 import math
 import random
+import json
+import os
 import threading
 import sys
 
@@ -113,10 +135,48 @@ CUTOFF_MIN, CUTOFF_MAX = 24, 127
 RESONANCE_MIN, RESONANCE_MAX = 0, 110
 SYNC_CC_MIN, SYNC_CC_MAX = 0, 127
 
+# ── found-floor phrase pool ─────────────────────────────────────────────────
+PHRASE_POOL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "found_floor_phrases_400kb.json")
+
+
+class PhraseDeck:
+    """A shuffled, non-repeating draw over a pool of phrases. Nothing repeats
+    until the whole deck has been dealt once; then it reshuffles and deals
+    again. Sameness is the enemy -- this is how we hold it off."""
+
+    def __init__(self, pool):
+        self.pool = list(pool)
+        self.deck = []
+        self.lock = threading.Lock()
+
+    def draw(self):
+        with self.lock:
+            if not self.deck:
+                self.deck = list(self.pool)
+                random.shuffle(self.deck)
+            return self.deck.pop()
+
+
+def load_phrase_pool():
+    try:
+        with open(PHRASE_POOL_PATH) as f:
+            pool = json.load(f)
+        pool = [p for p in pool if isinstance(p, list) and len(p) >= 2]
+        print(f"Loaded {len(pool)} found-floor phrases from {os.path.basename(PHRASE_POOL_PATH)}")
+        return pool
+    except Exception as e:
+        print(f"Could not load found-floor phrase pool ({e}); "
+              f"falling back to algorithmic pattern generation.")
+        return None
+
+
 running = True
 midi_out = None
 midi_fanout = None                       # virtual port the visualizer reads
 korg_out = None                          # korg's own sound engine, separate from the DIN thru to the SN2
+sn2_deck = None                          # PhraseDeck for the SN2 wandering run
+korg_deck = None                         # PhraseDeck for the korg's own run
+korg_locked = False                      # True while korg_run_loop is mid-phrase
 channel_locked = [False] * NUM_CHANNELS
 lock = threading.Lock()
 
@@ -309,6 +369,11 @@ def korg_note_loop():
         if korg_out is None:
             time.sleep(1.0)
             continue
+        with lock:
+            locked = korg_locked
+        if locked:
+            time.sleep(0.05)
+            continue
 
         activity = lerp(ACTIVITY_MIN, ACTIVITY_MAX, lfo01(ACTIVITY_LFO_PERIOD, phase))
         if random.random() > activity:
@@ -390,16 +455,22 @@ def mutate_pattern(pattern):
     return p
 
 
+def next_sn2_pattern(last_pattern):
+    """Found-floor phrase when the deck is available; falls back to the old
+    algorithmic generator (with its reuse/mutate behavior) otherwise."""
+    if sn2_deck is not None:
+        return sn2_deck.draw()
+    length = random.choice(RUN_LENGTHS)
+    if last_pattern is not None and len(last_pattern) == length and random.random() < RUN_REUSE_PROB:
+        return mutate_pattern(last_pattern) if random.random() < RUN_MUTATE_PROB else last_pattern[:]
+    return make_pattern(length)
+
+
 def run_loop():
     last_pattern = None
     while running:
         ch = random.randint(0, NUM_CHANNELS - 1)
-        length = random.choice(RUN_LENGTHS)
-
-        if last_pattern is not None and len(last_pattern) == length and random.random() < RUN_REUSE_PROB:
-            pattern = mutate_pattern(last_pattern) if random.random() < RUN_MUTATE_PROB else last_pattern[:]
-        else:
-            pattern = make_pattern(length)
+        pattern = next_sn2_pattern(last_pattern)
         last_pattern = pattern
 
         root = random.randint(RUN_ROOT_MIN, RUN_ROOT_MAX)
@@ -431,6 +502,46 @@ def run_loop():
             time.sleep(0.1)
 
 
+def korg_run_loop():
+    """The korg's own wandering run -- same found-floor phrase pool as the
+    SN2's run_loop, but its own deck (independent draw order) and its own
+    channel-9 lock so it doesn't collide with korg_note_loop."""
+    global korg_locked
+    while running:
+        if korg_out is None or korg_deck is None:
+            time.sleep(2.0)
+            continue
+
+        pattern = korg_deck.draw()
+        root = random.randint(RUN_ROOT_MIN, RUN_ROOT_MAX)
+        pitches = [max(0, min(127, root + offset)) for offset in pattern]
+
+        with lock:
+            korg_locked = True
+        try:
+            for pitch in pitches:
+                if not running:
+                    break
+                vel = random.randint(VEL_MIN, VEL_MAX)
+                dur = random.uniform(RUN_NOTE_DUR_MIN, RUN_NOTE_DUR_MAX)
+                _emit_korg([0x90 | KORG_CHANNEL, pitch, vel])
+                time.sleep(dur)
+                _emit_korg([0x80 | KORG_CHANNEL, pitch, 0])
+        finally:
+            with lock:
+                korg_locked = False
+
+        busy = lfo01(RUN_LFO_PERIOD, KORG_PHASE)
+        pause_min = lerp(RUN_PAUSE_MIN, RUN_PAUSE_BUSY_MIN, busy)
+        pause_max = lerp(RUN_PAUSE_MAX, RUN_PAUSE_BUSY_MAX, busy)
+        pause = random.uniform(pause_min, pause_max)
+        chunks = max(1, int(pause / 0.1))
+        for _ in range(chunks):
+            if not running:
+                break
+            time.sleep(0.1)
+
+
 def input_loop():
     global running
     while running:
@@ -447,17 +558,24 @@ def input_loop():
 
 
 def main():
-    global running, song_start
+    global running, song_start, sn2_deck, korg_deck
     select_port()
     select_korg_port()
     open_fanout()
     song_start = time.time()
 
+    pool = load_phrase_pool()
+    if pool is not None:
+        sn2_deck = PhraseDeck(pool)
+        korg_deck = PhraseDeck(pool)
+
     dwell_min = PERFORMANCE_DWELL_SECONDS // 60
     dwell_sec = PERFORMANCE_DWELL_SECONDS % 60
-    print(f"\nRunning {NUM_CHANNELS} channels of random notes + mod wheel, plus one wandering run.")
+    print(f"\n400kb series -- {NUM_CHANNELS} SN2 channels of random notes + mod wheel, "
+          f"one SN2 run, one korg run, korg's own voice on channel {KORG_CHANNEL + 1}.")
     print(f"Cycling random Performances {PERFORMANCE_BANK_LETTER}{PERFORMANCE_NUMBER_MIN:03d}-"
-          f"{PERFORMANCE_BANK_LETTER}{PERFORMANCE_NUMBER_MAX:03d}, {dwell_min}:{dwell_sec:02d} each.")
+          f"{PERFORMANCE_BANK_LETTER}{PERFORMANCE_NUMBER_MAX:03d}, {dwell_min}:{dwell_sec:02d} each. "
+          f"Korg presets every {KORG_PRESET_DWELL_SECONDS // 60}:{KORG_PRESET_DWELL_SECONDS % 60:02d}.")
     print("'q' + enter, or Ctrl+C, to stop.\n")
 
     threads = []
@@ -473,6 +591,7 @@ def main():
     threading.Thread(target=run_loop, daemon=True).start()
     threading.Thread(target=performance_loop, daemon=True).start()
     threading.Thread(target=korg_note_loop, daemon=True).start()
+    threading.Thread(target=korg_run_loop, daemon=True).start()
     threading.Thread(target=korg_preset_loop, daemon=True).start()
     threading.Thread(target=input_loop, daemon=True).start()
 
