@@ -176,6 +176,19 @@ function patchPreset(base) {
 const MUTATE_AMTS  = [0, 0.12, 0.28, 0.55, 1.00];
 const MUTATE_NAMES = ['OFF','MILD','WILD','EXTREME','CHAOTIC'];
 const MUT_SKIP = new Set(['rating']);
+// Keep a jittered value in bounds: never NaN/∞, kept within a ratio of the
+// original and under an absolute cap. THIS is what stops mutation from producing
+// the out-of-range constants that were hanging the GPU / freezing the render.
+function clampRatio(v, orig, maxRatio, cap){
+  if (!Number.isFinite(v)) return orig;
+  const a0 = Math.abs(orig);
+  if (a0 > 1e-6) {
+    const m = Math.min(a0 * maxRatio, Math.max(a0 / maxRatio, Math.abs(v)));
+    v = (v < 0 ? -1 : 1) * m;
+  }
+  if (Math.abs(v) > cap) v = (v < 0 ? -1 : 1) * cap;
+  return v;
+}
 function jitNum(v, a){
   if (a <= 0) return v;
   let x = v * (1 + (Math.random()*2 - 1) * a);              // linear multiplicative jitter
@@ -188,11 +201,23 @@ function jitNum(v, a){
     x += (Math.random()*2 - 1) * a * (Math.abs(v) + 0.4);
   if (a >= 0.70 && Math.random() < 0.10)                    // CHAOTIC: rare sign flip
     x = -x;
-  return Number.isFinite(x) ? x : v;
+  return clampRatio(x, v, 1 + a * 4, 1e5);                  // bounded — never out of range
 }
 function jitFloats(code, a){
   return code.replace(/(?<![\w.])(\d*\.\d+|\d+\.\d*)(?![\w.])/g, m => {
     const v = jitNum(parseFloat(m), a);
+    return Number.isFinite(v) ? v.toFixed(5) : m;
+  });
+}
+// Shader constants are the dangerous ones — a bad value hangs the GPU and kills
+// the WebGL context (no exception to catch, the stream just freezes). Jitter them
+// gently and TIGHTLY: multiplicative only, capped at ±40%, never past 2×/half the
+// original. Still clearly shifts the look, but can never go out of range.
+function jitShaderFloats(code, a){
+  const amt = Math.min(a, 0.40);
+  return code.replace(/(?<![\w.])(\d*\.\d+|\d+\.\d*)(?![\w.])/g, m => {
+    const orig = parseFloat(m);
+    const v = clampRatio(orig * (1 + (Math.random()*2 - 1) * amt), orig, 2.0, 1e4);
     return Number.isFinite(v) ? v.toFixed(5) : m;
   });
 }
@@ -218,7 +243,7 @@ function mutatePreset(src, a){
   // just a nudged version of the same preset. Only decimal literals are touched
   // (never ints/swizzles) so the shaders stay valid and compile.
   for (const k of ['warp','comp'])
-    if (typeof p[k] === 'string') p[k] = jitFloats(p[k], a * 0.5);
+    if (typeof p[k] === 'string') p[k] = jitShaderFloats(p[k], a * 0.7);
   return p;
 }
 // Mutation is now PER SCREEN and persistent: each screen keeps its own level
@@ -574,11 +599,13 @@ function composeOnce(){
     } catch (e) {
       // A bad preset/mutation threw — recover this screen without freezing the
       // whole loop. Reload its current preset UNMUTATED; if it keeps failing,
-      // move on to a different preset.
+      // calm the screen (drop its mutation) and move on to a different preset.
       if (++renderErr[s] <= 2 && currentName(s)) {
         try { viz[s].loadPreset(patchPreset(allPresets[currentName(s)]), 0); } catch(_) {}
       } else {
-        renderErr[s] = 0; stepOn(s, +1, 0);
+        renderErr[s] = 0;
+        if (screen[s].mutLevel > 0) { screen[s].mutLevel = 0; refreshHUD(); }   // self-calm a broken screen
+        stepOn(s, +1, 0);
       }
     }
   }
