@@ -14,6 +14,15 @@ struct WebViewContainer: NSViewRepresentable {
         context.coordinator.webView = webView
         loadHost(into: webView)
 
+        // Auto-recovery: if the WebView's render process ever crashes or is killed
+        // (e.g. the GPU watchdog after a bad frame), reload the host so the stream
+        // heals itself instead of forcing a manual restart. Screens come back clean.
+        context.coordinator.reloadHost = { [weak webView] in
+            guard let wv = webView else { return }
+            wv.configuration.userContentController.removeAllUserScripts()
+            self.loadHost(into: wv)
+        }
+
         if MidiEngine.enabled { context.coordinator.startMIDI() }
 
         audio.onQ = { [weak coord = context.coordinator] q in
@@ -158,6 +167,8 @@ struct WebViewContainer: NSViewRepresentable {
         weak var webView: WKWebView?
         private var keyMonitor: Any?
         private var preFillFrame: NSRect?
+        var reloadHost: (() -> Void)?          // set by makeNSView; reloads the visualizer host
+        private var reloadCount = 0
 
         // "Fill screen" that stays on the CURRENT Space (unlike ⌃⌘F fullscreen,
         // which moves to a separate Space where macOS freezes our rendering when
@@ -273,6 +284,17 @@ struct WebViewContainer: NSViewRepresentable {
                      didFail navigation: WKNavigation!,
                      withError error: Error) {
             print("[WebView] navigation error: \(error.localizedDescription)")
+        }
+
+        // The render process crashed or was killed (e.g. GPU watchdog after a bad
+        // frame). Auto-reload the host so a 24/7 stream heals itself instead of
+        // freezing until a manual restart. Screens come back clean (mutation off).
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            reloadCount += 1
+            print("[WebView] render process terminated — auto-reloading (#\(reloadCount))")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                self?.reloadHost?()
+            }
         }
 
         // MARK: WKScriptMessageHandler
