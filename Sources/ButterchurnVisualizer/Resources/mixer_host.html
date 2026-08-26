@@ -203,12 +203,6 @@ function jitNum(v, a){
     x = -x;
   return clampRatio(x, v, 1 + a * 4, 1e5);                  // bounded — never out of range
 }
-function jitFloats(code, a){
-  return code.replace(/(?<![\w.])(\d*\.\d+|\d+\.\d*)(?![\w.])/g, m => {
-    const v = jitNum(parseFloat(m), a);
-    return Number.isFinite(v) ? v.toFixed(5) : m;
-  });
-}
 // Shader constants are the dangerous ones — a bad value hangs the GPU and kills
 // the WebGL context (no exception to catch, the stream just freezes). Jitter them
 // gently and TIGHTLY: multiplicative only, capped at ±40%, never past 2×/half the
@@ -232,16 +226,21 @@ function mutatePreset(src, a){
         bv[k] = Number.isFinite(nv) ? nv : v;     // never introduce NaN/∞
       }
     }
-    if (typeof bv.decay    === 'number') bv.decay    = Math.min(1,   Math.max(0,   bv.decay));
-    if (typeof bv.gammaadj === 'number') bv.gammaadj = Math.min(8,   Math.max(0.1, bv.gammaadj));
-    if (typeof bv.zoom     === 'number') bv.zoom     = Math.min(8,   Math.max(0.1, bv.zoom));
+    // Clamp every geometry-affecting base value to a safe range. These feed the
+    // warp-mesh transform; a NaN/huge value here makes a degenerate mesh that
+    // hangs the GPU with no catchable error — the freeze. Clamping guarantees the
+    // mesh stays finite no matter what the jitter did.
+    const cl = (k, lo, hi) => { if (typeof bv[k] === 'number') bv[k] = Math.min(hi, Math.max(lo, bv[k])); };
+    cl('decay',0,1); cl('gammaadj',0.1,8); cl('zoom',0.3,3); cl('warp',0,4); cl('rot',-1,1);
+    cl('cx',-1,2); cl('cy',-1,2); cl('sx',0.2,3); cl('sy',0.2,3);
+    cl('dx',-0.5,0.5); cl('dy',-0.5,0.5); cl('wave_x',-1,2); cl('wave_y',-1,2); cl('warpAnimSpeed',0,4);
   }
-  for (const k of ['init_eqs_str','frame_eqs_str','pixel_eqs_str'])
-    if (typeof p[k] === 'string') p[k] = jitFloats(p[k], a * 0.6);   // gentler on equations
-  // The warp + comp GLSL shaders carry most of the visual character — jitter
-  // their float constants too so EXTREME/CHAOTIC actually look different, not
-  // just a nudged version of the same preset. Only decimal literals are touched
-  // (never ints/swizzles) so the shaders stay valid and compile.
+  // We deliberately do NOT mutate the init/frame/pixel EQUATIONS. Those drive the
+  // warp-mesh geometry, and a randomized constant can make a per-frame value go
+  // NaN/Inf → a degenerate mesh → the GPU hangs with NO JavaScript error to catch
+  // (exactly the freeze). Visible variation instead comes from the clamped
+  // baseVals above and the shaders below, which are pixel-level and bounded — a
+  // bad value there is at worst a black pixel, never a GPU hang.
   for (const k of ['warp','comp'])
     if (typeof p[k] === 'string') p[k] = jitShaderFloats(p[k], a * 0.7);
   return p;
