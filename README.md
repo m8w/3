@@ -89,7 +89,7 @@ SINGLE_SCREEN=1 ./ButterchurnVisualizer.app/Contents/MacOS/ButterchurnVisualizer
 | `S` | Toggle the selected screen's polarity (＋ add / − subtract) |
 | `[` / `]` | Selected screen weight down / up |
 | `M` | Toggle audio-reactive auto-mix |
-| `C` | Cycle blend mode |
+| `C` | Cycle the selected screen's blend mode (per-screen; 10 modes) |
 | `R` | Toggle reactivity: low/mid/high ⇄ left/mid/right (stereo) |
 | `G` | Cycle the selected screen's mutation: OFF → MILD → WILD → EXTREME → CHAOTIC (nonlinear, per-screen) |
 | `X` | Reject the selected screen's preset (culls it for good) |
