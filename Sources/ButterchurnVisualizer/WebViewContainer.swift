@@ -221,7 +221,8 @@ struct WebViewContainer: NSViewRepresentable {
                 case "x":  cmd = "reject" // cull the selected screen's preset for good
                 case "c":  cmd = "blend"  // cycle blend mode (Add, Screen, Difference, RGB split, …)
                 case "r":  cmd = "react"  // toggle low/mid/high ⇄ left/mid/right
-                case "g":  cmd = "mutate" // cycle preset mutation (OFF/SUBTLE/WILD) + re-roll
+                case "g":  cmd = "mutate" // cycle the selected screen's mutation level
+                case "v":  cmd = "midiblend" // toggle MIDI-driven blend (modes + amounts)
                 case "f":  toggleFillScreen(); return   // same-Space fill (keeps rendering)
                 default:   return
                 }

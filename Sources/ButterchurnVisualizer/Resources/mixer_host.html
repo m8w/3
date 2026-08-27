@@ -93,7 +93,7 @@
     <button class="mx" data-act="hide">GRAPHICS ONLY ⤢</button>
   </div>
 </div>
-<div id="ginfo">＋/− polarity · weight slider · ◀▶ preset · R react (freq⇄stereo) · 1/2/3 select then C blend / G mutate (MILD→CHAOTIC) / X reject — all per-screen · H hide bar · F fill screen (not ⌃⌘F)</div>
+<div id="ginfo">＋/− polarity · weight slider · ◀▶ preset · R react · V MIDI-blend (drives modes+amounts) · 1/2/3 select then C blend / G mutate (MILD→CHAOTIC) / X reject — per-screen · H hide bar · F fill (not ⌃⌘F)</div>
 
 <!-- Preset queue shim (PresetLoader may inject before the module runs) -->
 <script>
@@ -478,6 +478,10 @@ const rotLoc = gl.getUniformLocation(prog, 'uRot');
 const scaleLoc = gl.getUniformLocation(prog, 'uScale');
 const gammaLoc = gl.getUniformLocation(prog, 'uGamma');
 const BLEND_NAMES = ['ADD','SUBTRACT','LIGHTEN','COLOR DODGE','COLOR BURN','HARD LIGHT','DIFFERENCE','EXCLUSION','ALPHA-OVER','CHANNEL'];
+// When MIDI drives the blend (V toggle), the blend MODE is chosen from this
+// musical subset by the live sync arc, and the three screens run offset modes.
+const MIDI_BLEND_SET = [0, 2, 6, 3, 7, 5];   // ADD, LIGHTEN, DIFFERENCE, DODGE, EXCLUSION, HARD LIGHT
+let midiBlend = true;                          // V toggles; MIDI drives blend when connected
 gl.viewport(0, 0, OUT_W, OUT_H);
 
 // ── MIDI reactivity + ch-16-anchored oscillators ──────────────────────────────
@@ -502,7 +506,7 @@ let midi = null, _midiHits = 0, midiPulse = 0;
 let anchorIndex = -1, lastProgram = -999, songTime = 0;
 const _t0 = performance.now();
 // Smoothed live CC arcs (0..1) — the actual synth values, slewed to 60fps.
-const M = { on:false, cut:0.5, reso:0.3, hard:0.4, sync:0.5, mod:0, bend:0 };
+const M = { on:false, cut:0.5, reso:0.3, hard:0.4, sync:0.5, mod:0, bend:0, blendDrive:0.5 };
 
 window._updateMIDI = m => {
   const first = !midi; midi = m;
@@ -539,6 +543,11 @@ function updateMidiSmooth(){
   M.sync += ((midi.sync   ?? 0.5) - M.sync) * k;
   M.mod  += ((midi.mod    ?? 0.0) - M.mod ) * k;
   M.bend += ((midi.bend   ?? 0.0) - M.bend) * k;
+  // Smoothed driver for the MIDI blend MODE: sync arc (slow) + cutoff arc (mid) +
+  // live note activity (fast), slewed so the mode shifts with the music but never
+  // flickers frame-to-frame.
+  const want = M.sync * 0.45 + M.cut * 0.35 + Math.min(1, (midi.notes || 0) * 0.12) * 0.20;
+  M.blendDrive += (want - M.blendDrive) * 0.04;
 }
 // Extra energy the MIDI stream contributes: note pulses + mod wheel + note count.
 function midiEnergy(){
@@ -566,14 +575,30 @@ function midiEELframe(){
 }
 
 function bandEnergy(s){ return reactMode === 'stereo' ? band[s].all : band[s][screen[s].band]; }
+// Each screen's blend AMOUNT is driven by its own MIDI dimension, so the three
+// pulse independently with the stream: screen 1 on note energy, screen 2 on the
+// cutoff + mod-wheel arcs, screen 3 on the resonance + hardness arcs.
+function midiWeightDrive(s){
+  if (!M.on) return 0;
+  if (s === 0) return Math.min(1, midiPulse * 0.6 + Math.min(0.6, (midi.notes || 0) * 0.07));
+  if (s === 1) return Math.min(1, M.cut * 0.8 + M.mod * 0.5);
+  return Math.min(1, M.reso * 0.8 + M.hard * 0.5);
+}
 function effectiveWeight(s){
   const base = screen[s].weight;
   if (!autoMix) return base;
-  let e = Math.min(1.4, (bandEnergy(s) + midiEnergy() * 0.6) * 1.6);
-  // The resonance/sync arcs gently emphasise the mix across the song (screen 2
-  // swells on the sync crest, the flanks fall — a slow, locked breathing).
-  if (M.on) e *= 1 + (M.reso - 0.3) * 0.25 + (M.sync - 0.5) * 0.20 * (s === 1 ? 1 : -0.5);
-  return Math.max(0, Math.min(1.6, base * (0.45 + 0.95 * e)));
+  let e = Math.min(1.4, (bandEnergy(s) + midiEnergy() * 0.4) * 1.5);
+  e = Math.min(1.7, e + midiWeightDrive(s) * 0.9);   // per-screen MIDI drive on the blend amount
+  return Math.max(0, Math.min(1.6, base * (0.4 + 0.95 * e)));
+}
+// The blend MODE driven by the live sync arc (V toggle). Returns [m0,m1,m2] — the
+// three screens run offset modes so they never all match, and it drifts through
+// the musical subset as the song's sync knob moves.
+function midiBlendModes(){
+  const bi = Math.min(MIDI_BLEND_SET.length - 1, Math.max(0, Math.floor(M.blendDrive * MIDI_BLEND_SET.length)));
+  return [ MIDI_BLEND_SET[bi],
+           MIDI_BLEND_SET[(bi + 1) % MIDI_BLEND_SET.length],
+           MIDI_BLEND_SET[(bi + 2) % MIDI_BLEND_SET.length] ];
 }
 
 // ── render loop: render all three, upload, composite — all in one rAF turn ────
@@ -608,7 +633,8 @@ function composeOnce(){
     screen[0].sign * effectiveWeight(0),
     screen[1].sign * effectiveWeight(1),
     screen[2].sign * effectiveWeight(2));
-  gl.uniform1iv(modesLoc, [screen[0].blend, screen[1].blend, screen[2].blend]);
+  const bm = (midiBlend && M.on) ? midiBlendModes() : [screen[0].blend, screen[1].blend, screen[2].blend];
+  gl.uniform1iv(modesLoc, bm);
   gl.uniform1f(rotLoc, midiRot());
   gl.uniform1f(scaleLoc, midiScale());
   gl.uniform1f(gammaLoc, midiGamma());
@@ -662,7 +688,9 @@ function refreshHUD(){
     p.wv.textContent = screen[s].weight.toFixed(2);
   }
   autoBtn.textContent = 'AUTO-MIX: ' + (autoMix ? 'ON' : 'OFF');
-  blendBtn.textContent = 'BLEND S' + (selected + 1) + ': ' + BLEND_NAMES[screen[selected].blend];
+  blendBtn.textContent = (midiBlend && M.on)
+    ? 'BLEND: MIDI-DRIVEN'
+    : 'BLEND S' + (selected + 1) + ': ' + BLEND_NAMES[screen[selected].blend];
   reactBtn.textContent = 'REACT: ' + (reactMode === 'stereo' ? 'L/MID/R' : 'LOW/MID/HIGH');
   mutateBtn.textContent = 'MUTATE S' + (selected + 1) + ': ' + MUTATE_NAMES[screen[selected].mutLevel];
 }
@@ -692,6 +720,9 @@ bar.addEventListener('click', e => {
     case 'prev':  stepOn(s, -1, 2.7); break;     // stepOn refreshes the HUD
     case 'next':  stepOn(s, +1, 2.7); break;
     case 'auto':  autoMix = !autoMix; refreshHUD(); break;
+    case 'blend': window._keyCommand('midiblend'); break;   // toggle MIDI-driven blend
+    case 'react': window._keyCommand('react'); break;
+    case 'mutate':window._keyCommand('mutate'); break;
     case 'reset': resetMix(); break;
     case 'hide':  setHud(false); break;   // → graphics only (H brings it back)
   }
@@ -768,6 +799,7 @@ window._keyCommand = function(cmd){
       refreshHUD(); showBar(); break;
     case 'blend':     screen[selected].blend = (screen[selected].blend + 1) % BLEND_NAMES.length; refreshHUD(); showBar(); break; // C — selected screen's blend
     case 'blendPrev': screen[selected].blend = (screen[selected].blend - 1 + BLEND_NAMES.length) % BLEND_NAMES.length; refreshHUD(); showBar(); break;
+    case 'midiblend': midiBlend = !midiBlend; refreshHUD(); showBar(); break;  // V — MIDI drives blend mode ⇄ manual per-screen
     case 'reset':resetMix(); break;
     case 'reject': rejectCurrent(); break;      // X = cull the selected screen's preset for good
     case 'pause':paused = !paused; break;
@@ -779,7 +811,7 @@ window._keyCommand = function(cmd){
 document.addEventListener('keydown', e => {
   const map = { '1':'1','2':'2','3':'3','n':'next','p':'prev','b':'cut','s':'sign',
                 '[':'wdn',']':'wup','m':'auto','0':'reset','x':'reject','c':'blend','C':'blendPrev',
-                'r':'react','g':'mutate',' ':'pause','h':'hud','ArrowRight':'next','ArrowLeft':'prev' };
+                'r':'react','g':'mutate','v':'midiblend',' ':'pause','h':'hud','ArrowRight':'next','ArrowLeft':'prev' };
   const c = map[e.key]; if (c){ e.preventDefault(); window._keyCommand(c); }
 });
 
