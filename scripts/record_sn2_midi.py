@@ -22,14 +22,14 @@ you'd get 16 complete 2-hour files plus one partial final file for whatever
 was left when you stopped it. 'q' + enter, or Ctrl+C, stops it (finishing
 and writing out whatever session is currently in progress first).
 
-Within each session, every CHECKPOINT_INTERVAL seconds a safety snapshot is
-written to its OWN numbered file (..._checkpoint01.mid, _checkpoint02.mid,
-...) -- nothing ever gets overwritten, each checkpoint is a complete, valid,
-importable .mid file in its own right up to that point. The session's base
-filename (no _checkpointNN suffix) is reserved for that session's final
-write, on natural completion or on stop. Every output filename also carries
-microsecond precision and an explicit collision check, so no two files
-(across sessions or checkpoints) can ever clobber each other.
+ONE FILE PER SESSION -- no separate numbered checkpoint files. Every
+CHECKPOINT_INTERVAL seconds the session's own file is rewritten in place
+with everything accumulated so far, so an interrupted run still leaves a
+valid, complete, importable .mid file; by the time the full session elapses
+that same file naturally already contains the whole 2 hours. Each session's
+filename carries microsecond precision plus an explicit collision check, so
+two separate sessions (or two separate runs of this script) can never
+clobber each other.
 
 Channels 1-8 (SN2 parts) and 9 (korg) each get their own named track;
 channel 16 (Performance/Global) gets a track too.
@@ -205,14 +205,11 @@ def main():
             print(f"[session {session_num}] recording -> {path}")
 
             last_checkpoint = time.time()
-            checkpoint_num = 0
             session_start = time.time()
             while running and (time.time() - session_start) < SESSION_SECONDS:
                 time.sleep(1.0)
                 if time.time() - last_checkpoint >= CHECKPOINT_INTERVAL:
-                    checkpoint_num += 1
-                    checkpoint_path = out_path[:-4] + f"_checkpoint{checkpoint_num:02d}.mid"
-                    write_file(checkpoint_path, "checkpoint")
+                    write_file(out_path, "in progress")
                     last_checkpoint = time.time()
 
             label = "final" if (time.time() - session_start) >= SESSION_SECONDS else "final (stopped early)"
