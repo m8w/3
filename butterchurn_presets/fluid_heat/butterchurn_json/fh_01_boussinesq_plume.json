@@ -1,0 +1,86 @@
+{
+ "shapes": [
+  {
+   "baseVals": {
+    "enabled": 0
+   }
+  },
+  {
+   "baseVals": {
+    "enabled": 0
+   }
+  },
+  {
+   "baseVals": {
+    "enabled": 0
+   }
+  },
+  {
+   "baseVals": {
+    "enabled": 0
+   }
+  }
+ ],
+ "waves": [
+  {
+   "baseVals": {},
+   "init_eqs_str": " ",
+   "frame_eqs_str": "",
+   "point_eqs_str": ""
+  },
+  {
+   "baseVals": {},
+   "init_eqs_str": " ",
+   "frame_eqs_str": "",
+   "point_eqs_str": ""
+  },
+  {
+   "baseVals": {},
+   "init_eqs_str": " ",
+   "frame_eqs_str": "",
+   "point_eqs_str": ""
+  },
+  {
+   "baseVals": {},
+   "init_eqs_str": " ",
+   "frame_eqs_str": "",
+   "point_eqs_str": ""
+  }
+ ],
+ "init_eqs_str": "a['q1'] = 0; a['q2'] = 0; a['q3'] = 0; a['q4'] = 0; a['q5'] = 0;",
+ "frame_eqs_str": "a['q1']=((a['bass_att']*0.5)+(a['bass']*0.5)); a['q2']=a['mid_att']; a['q3']=a['treb_att']; a['q4']=(((a['q1']*0.6)+(a['q2']*0.3))+(a['q3']*0.1)); a['decay']=(0.982+(Math.min(a['q1'], 1.5)*0.008)); a['warp']=(0.30+(a['q2']*0.55)); a['q5']=((Math.sin((a['time']*0.19))*0.5)+(Math.cos((a['time']*0.11))*0.5));",
+ "pixel_eqs_str": "a['dy']=((0.0022*(1.0-a['y']))*(1.0+a['q1'])); a['dx']=(((0.0016*Math.sin(((a['y']*7.4)+(a['time']*0.5))))*(0.4+a['q2']))*a['y']); a['rot']=((0.014*(0.5-a['y']))*a['q3']); a['zoom']=(1.0+((0.0025*a['q1'])*(1.0-a['rad'])));",
+ "baseVals": {
+  "rating": 5,
+  "gammaadj": 1,
+  "decay": 0.985,
+  "echo_zoom": 1,
+  "wave_mode": 7,
+  "additivewave": 1,
+  "modwavealphabyvolume": 1,
+  "wave_brighten": 0,
+  "wrap": 0,
+  "wave_a": 0.12,
+  "wave_scale": 0.9,
+  "warpscale": 1.2,
+  "warp": 0.4,
+  "wave_r": 0.9,
+  "wave_g": 0.5,
+  "wave_b": 0.1,
+  "wave_y": 0.94,
+  "ob_size": 0,
+  "ib_size": 0,
+  "ib_r": 0,
+  "ib_g": 0,
+  "ib_b": 0,
+  "mv_x": 0,
+  "mv_y": 0,
+  "mv_l": 0,
+  "mv_r": 0,
+  "mv_g": 0,
+  "mv_b": 0,
+  "mv_a": 0
+ },
+ "warp": "\nvec2 matrix_row0(mat2 m, int i) { return vec2( m[0][i], m[1][i] ); }\nvec3 matrix_row0(mat3 m, int i) { return vec3( m[0][i], m[1][i], m[2][i] ); }\nvec4 matrix_row0(mat4 m, int i) { return vec4( m[0][i], m[1][i], m[2][i], m[3][i] ); }\nvec2  m_scalar_swizzle20(float x) { return  vec2(x, x); }\nivec2 m_scalar_swizzle20(int   x) { return ivec2(x, x); }\nvec3  m_scalar_swizzle30(float x) { return  vec3(x, x, x); }\nivec3 m_scalar_swizzle30(int   x) { return ivec3(x, x, x); }\nvec4  m_scalar_swizzle40(float x) { return  vec4(x, x, x, x); }\nivec4 m_scalar_swizzle40(int   x) { return ivec4(x, x, x, x); }\nuvec2 m_scalar_swizzle20(uint  x) { return uvec2(x, x); }\nuvec3 m_scalar_swizzle30(uint  x) { return uvec3(x, x, x); }\nuvec4 m_scalar_swizzle40(uint  x) { return uvec4(x, x, x, x); }\nvec2 bvecTernary0(bvec2 cond, vec2 trueExpr, vec2 falseExpr) { vec2 ret; ret.x = cond.x ? trueExpr.x : falseExpr.x; ret.y = cond.y ? trueExpr.y : falseExpr.y; return ret; }\nvec3 bvecTernary0(bvec3 cond, vec3 trueExpr, vec3 falseExpr) { vec3 ret; ret.x = cond.x ? trueExpr.x : falseExpr.x; ret.y = cond.y ? trueExpr.y : falseExpr.y; ret.z = cond.z ? trueExpr.z : falseExpr.z; return ret; }\nvec4 bvecTernary0(bvec4 cond, vec4 trueExpr, vec4 falseExpr) { vec4 ret; ret.x = cond.x ? trueExpr.x : falseExpr.x; ret.y = cond.y ? trueExpr.y : falseExpr.y; ret.z = cond.z ? trueExpr.z : falseExpr.z; ret.w = cond.w ? trueExpr.w : falseExpr.w; return ret; }\nvec4 main_shader_sentinel(vec2 uv) {\n    vec3 ret;\n    vec2 d = vec2( (texsize).zw );\n    vec3 lw = vec3( vec3(0.500000, 0.350000, 0.150000) );\n    vec3 c = vec3( (texture(sampler_main, uv)).xyz );\n    float heat = float( dot(c, lw) );\n    vec2 uvb = vec2( uv );\n    ((uvb).y += ((heat * heat) * (0.003800 + (0.003000 * q1))));\n    float hl = float( dot((texture(sampler_main, (uv - vec2((d).x, 0.000000)))).xyz, lw) );\n    float hr = float( dot((texture(sampler_main, (uv + vec2((d).x, 0.000000)))).xyz, lw) );\n    float hd = float( dot((texture(sampler_main, (uv - vec2(0.000000, (d).y)))).xyz, lw) );\n    float hu = float( dot((texture(sampler_main, (uv + vec2(0.000000, (d).y)))).xyz, lw) );\n    vec2 g = vec2( vec2((hr - hl), (hu - hd)) );\n    vec2 curl = vec2( vec2((-(g).y), (g).x) );\n    (uvb += (curl * vec2 ((0.012000 + (0.045000 * q2)))));\n    vec3 adv = vec3( (texture(sampler_main, uvb)).xyz );\n    vec3 dif = vec3( ((((((texture(sampler_main, (uvb - vec2((d).x, 0.000000)))).xyz + (texture(sampler_main, (uvb + vec2((d).x, 0.000000)))).xyz) + (texture(sampler_main, (uvb - vec2(0.000000, (d).y)))).xyz) + (texture(sampler_main, (uvb + vec2(0.000000, (d).y)))).xyz) + (texture(sampler_main, uvb)).xyz) * vec3 (0.200000)) );\n    (adv = mix(adv, dif, vec3 ((0.090000 + (0.160000 * q3)))));\n    vec2 j1 = vec2( vec2((0.220000 + (0.030000 * q5)), 0.930000) );\n    vec2 j2 = vec2( vec2(0.500000, 0.965000) );\n    vec2 j3 = vec2( vec2((0.780000 - (0.030000 * q5)), 0.930000) );\n    vec2 r1 = vec2( (uv - j1) );\n    vec2 r2 = vec2( (uv - j2) );\n    vec2 r3 = vec2( (uv - j3) );\n    float e1 = float( (exp(((-dot(r1, r1)) / 0.003000)) * bass_att) );\n    float e2 = float( (exp(((-dot(r2, r2)) / 0.004200)) * bass) );\n    float e3 = float( (exp(((-dot(r3, r3)) / 0.003000)) * mid_att) );\n    vec3 src = vec3( ((vec3(1.000000, 0.720000, 0.300000) * vec3 (((e1 + e2) + e3))) * vec3 (0.300000)) );\n    (adv += (src * clamp((vec3 (1.000000) - adv), 0.0, 1.0)));\n    (adv *= vec3 (0.995500));\n    (ret = adv);\n    return vec4(ret, 1.000000);\n}\n shader_body { \n    vec4 result = main_shader_sentinel(uv);\n    ret = result.rgb;\n }",
+ "comp": "\nvec2 matrix_row0(mat2 m, int i) { return vec2( m[0][i], m[1][i] ); }\nvec3 matrix_row0(mat3 m, int i) { return vec3( m[0][i], m[1][i], m[2][i] ); }\nvec4 matrix_row0(mat4 m, int i) { return vec4( m[0][i], m[1][i], m[2][i], m[3][i] ); }\nvec2  m_scalar_swizzle20(float x) { return  vec2(x, x); }\nivec2 m_scalar_swizzle20(int   x) { return ivec2(x, x); }\nvec3  m_scalar_swizzle30(float x) { return  vec3(x, x, x); }\nivec3 m_scalar_swizzle30(int   x) { return ivec3(x, x, x); }\nvec4  m_scalar_swizzle40(float x) { return  vec4(x, x, x, x); }\nivec4 m_scalar_swizzle40(int   x) { return ivec4(x, x, x, x); }\nuvec2 m_scalar_swizzle20(uint  x) { return uvec2(x, x); }\nuvec3 m_scalar_swizzle30(uint  x) { return uvec3(x, x, x); }\nuvec4 m_scalar_swizzle40(uint  x) { return uvec4(x, x, x, x); }\nvec2 bvecTernary0(bvec2 cond, vec2 trueExpr, vec2 falseExpr) { vec2 ret; ret.x = cond.x ? trueExpr.x : falseExpr.x; ret.y = cond.y ? trueExpr.y : falseExpr.y; return ret; }\nvec3 bvecTernary0(bvec3 cond, vec3 trueExpr, vec3 falseExpr) { vec3 ret; ret.x = cond.x ? trueExpr.x : falseExpr.x; ret.y = cond.y ? trueExpr.y : falseExpr.y; ret.z = cond.z ? trueExpr.z : falseExpr.z; return ret; }\nvec4 bvecTernary0(bvec4 cond, vec4 trueExpr, vec4 falseExpr) { vec4 ret; ret.x = cond.x ? trueExpr.x : falseExpr.x; ret.y = cond.y ? trueExpr.y : falseExpr.y; ret.z = cond.z ? trueExpr.z : falseExpr.z; ret.w = cond.w ? trueExpr.w : falseExpr.w; return ret; }\nvec4 main_shader_sentinel(vec2 uv) {\n    vec3 ret;\n    vec2 d = vec2( (texsize).zw );\n    vec3 lw = vec3( vec3(0.500000, 0.350000, 0.150000) );\n    vec3 c = vec3( (texture(sampler_main, uv)).xyz );\n    float t = float( clamp((dot(c, lw) * 1.450000), 0.0, 1.0) );\n    vec3 k0 = vec3( vec3(0.000000, 0.000000, 0.000000) );\n    vec3 k1 = vec3( vec3(0.102000, 0.000000, 0.200000) );\n    vec3 k2 = vec3( vec3(0.902000, 0.243000, 0.000000) );\n    vec3 k3 = vec3( vec3(1.000000, 0.800000, 0.000000) );\n    vec3 k4 = vec3( vec3(1.000000, 1.000000, 1.000000) );\n    vec3 pal = vec3( mix(k0, k1, vec3 (clamp((t * 4.000000), 0.0, 1.0))) );\n    (pal = mix(pal, k2, vec3 (clamp(((t * 4.000000) - 1.000000), 0.0, 1.0))));\n    (pal = mix(pal, k3, vec3 (clamp(((t * 4.000000) - 2.000000), 0.0, 1.0))));\n    (pal = mix(pal, k4, vec3 (clamp(((t * 4.000000) - 3.000000), 0.0, 1.0))));\n    vec3 b = vec3( (((((texture(sampler_main, (uv - vec2((3.000000 * (d).x), 0.000000)))).xyz + (texture(sampler_main, (uv + vec2((3.000000 * (d).x), 0.000000)))).xyz) + (texture(sampler_main, (uv - vec2(0.000000, (3.000000 * (d).y))))).xyz) + (texture(sampler_main, (uv + vec2(0.000000, (3.000000 * (d).y))))).xyz) * vec3 (0.250000)) );\n    float bt = float( clamp((dot(b, lw) * 1.450000), 0.0, 1.0) );\n    vec3 gp = vec3( mix(k0, k1, vec3 (clamp((bt * 4.000000), 0.0, 1.0))) );\n    (gp = mix(gp, k2, vec3 (clamp(((bt * 4.000000) - 1.000000), 0.0, 1.0))));\n    (gp = mix(gp, k3, vec3 (clamp(((bt * 4.000000) - 2.000000), 0.0, 1.0))));\n    (gp = mix(gp, k4, vec3 (clamp(((bt * 4.000000) - 3.000000), 0.0, 1.0))));\n    (pal += ((gp * vec3 (bt)) * vec3 (0.380000)));\n    (pal *= vec3 ((1.150000 + (0.250000 * q4))));\n    (ret = (pal / (vec3 (1.000000) + pal)));\n    return vec4(ret, 1.000000);\n}\n shader_body { \n    vec4 result = main_shader_sentinel(uv);\n    ret = result.rgb;\n }"
+}

@@ -2,19 +2,23 @@ MILKDROP_PRESET_VERSION=201
 PSVERSION=2
 PSVERSION_WARP=2
 PSVERSION_COMP=2
+;
+; fluid_heat 04 - Organic Decay
+;
+; Heat does not simply fade to black; it cools into something else. Two
+; quantities are tracked at different rates - temperature T (fast decay,
+; green) and density D (slow, red) - and the palette crossfades on the
+; difference. Fresh strikes are incandescent white/yellow; as T drains
+; away and D lingers, the same material turns moss, lichen and bone.
+;
+; The crossfade weight is  w = (D - T) * decay_mix + organic_bias*(1-T)*D
+; which is the transfer function from the solver's organic_lut pass.
+;
+; organic_bias: how strongly cooled material pulls toward moss
+; decay_mix: how quickly the ageing crossfade takes hold
+; wandering strike position
+; slow outward creep - decayed matter spreads as it cools
 [preset00]
-//
-// fluid_heat 04 - Organic Decay
-//
-// Heat does not simply fade to black; it cools into something else. Two
-// quantities are tracked at different rates - temperature T (fast decay,
-// green) and density D (slow, red) - and the palette crossfades on the
-// difference. Fresh strikes are incandescent white/yellow; as T drains
-// away and D lingers, the same material turns moss, lichen and bone.
-//
-// The crossfade weight is  w = (D - T) * decay_mix + organic_bias*(1-T)*D
-// which is the transfer function from the solver's organic_lut pass.
-//
 fRating=5.000
 fGammaAdj=1.000
 fDecay=0.995
@@ -87,19 +91,15 @@ b1ed=0.250
 per_frame_1=q1 = bass_att;
 per_frame_2=q2 = mid_att;
 per_frame_3=q3 = treb_att;
-per_frame_4=// organic_bias: how strongly cooled material pulls toward moss
-per_frame_5=q4 = 0.55 - min(bass_att, 1.0) * 0.30;
-per_frame_6=// decay_mix: how quickly the ageing crossfade takes hold
-per_frame_7=q5 = 0.80;
-per_frame_8=// wandering strike position
-per_frame_9=q6 = 0.5 + 0.32 * cos(time * 0.211) * cos(time * 0.071);
-per_frame_10=q7 = 0.5 + 0.32 * sin(time * 0.174) * cos(time * 0.093);
-per_frame_11=decay = 0.994;
-per_pixel_1=// slow outward creep - decayed matter spreads as it cools
-per_pixel_2=zoom = 1.0 - 0.0016 * (1.0 - rad) * (0.4 + q1);
-per_pixel_3=rot = 0.008 * rad * sin(time * 0.23) * (0.5 + q2);
-per_pixel_4=dy = -0.0009 * (1.0 - rad) * q1;
-per_pixel_5=warp = 0.18 + 0.45 * q2;
+per_frame_4=q4 = 0.55 - min(bass_att, 1.0) * 0.30;
+per_frame_5=q5 = 0.80;
+per_frame_6=q6 = 0.5 + 0.32 * cos(time * 0.211) * cos(time * 0.071);
+per_frame_7=q7 = 0.5 + 0.32 * sin(time * 0.174) * cos(time * 0.093);
+per_frame_8=decay = 0.994;
+per_pixel_1=zoom = 1.0 - 0.0016 * (1.0 - rad) * (0.4 + q1);
+per_pixel_2=rot = 0.008 * rad * sin(time * 0.23) * (0.5 + q2);
+per_pixel_3=dy = -0.0009 * (1.0 - rad) * q1;
+per_pixel_4=warp = 0.18 + 0.45 * q2;
 warp_1=`shader_body {
 warp_2=`    float2 d = texsize.zw;
 warp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
@@ -121,7 +121,7 @@ warp_18=`    float2 g = float2(tr - tl, tup - tdn);
 warp_19=`    uvb += float2(-g.y, g.x) * (0.016 + 0.030 * q2);
 warp_20=`
 warp_21=`    float3 adv = tex2D(sampler_main, uvb).xyz;
-warp_22=`    float3 dif = GetBlur1(uvb);
+warp_22=`    float3 dif = (tex2D(sampler_main, uvb - float2(d.x, 0.0)).xyz + tex2D(sampler_main, uvb + float2(d.x, 0.0)).xyz + tex2D(sampler_main, uvb - float2(0.0, d.y)).xyz + tex2D(sampler_main, uvb + float2(0.0, d.y)).xyz + tex2D(sampler_main, uvb).xyz) * 0.2;
 warp_23=`
 warp_24=`    // ---- two-rate cooling -----------------------------------------
 warp_25=`    // T diffuses hard and decays fast; D holds its shape and lingers.
@@ -144,45 +144,46 @@ warp_41=`
 warp_42=`    ret = float3(Dn, Tn, An);
 warp_43=`}
 comp_1=`shader_body {
-comp_2=`    float3 c = tex2D(sampler_main, uv).xyz;
-comp_3=`    float D = saturate(c.r * 1.20);
-comp_4=`    float T = saturate(c.g * 1.35);
-comp_5=`    float A = c.b;
-comp_6=`
-comp_7=`    // ---- incandescent (fresh) --------------------------------------
-comp_8=`    float3 k0 = float3(0.000, 0.000, 0.000);
-comp_9=`    float3 k1 = float3(0.102, 0.000, 0.200);
-comp_10=`    float3 k2 = float3(0.902, 0.243, 0.000);
-comp_11=`    float3 k3 = float3(1.000, 0.800, 0.000);
-comp_12=`    float3 k4 = float3(1.000, 1.000, 1.000);
-comp_13=`    float3 hot = lerp(k0, k1, saturate(T * 4.0));
-comp_14=`    hot = lerp(hot, k2, saturate(T * 4.0 - 1.0));
-comp_15=`    hot = lerp(hot, k3, saturate(T * 4.0 - 2.0));
-comp_16=`    hot = lerp(hot, k4, saturate(T * 4.0 - 3.0));
-comp_17=`
-comp_18=`    // ---- organic (cooled) ------------------------------------------
-comp_19=`    float3 o0 = float3(0.020, 0.039, 0.031);
-comp_20=`    float3 o1 = float3(0.180, 0.102, 0.271);
-comp_21=`    float3 o2 = float3(0.141, 0.333, 0.200);
-comp_22=`    float3 o3 = float3(0.541, 0.690, 0.290);
-comp_23=`    float3 o4 = float3(0.910, 0.878, 0.706);
-comp_24=`    float od = saturate(D + A * 0.35);
-comp_25=`    float3 cool = lerp(o0, o1, saturate(od * 4.0));
-comp_26=`    cool = lerp(cool, o2, saturate(od * 4.0 - 1.0));
-comp_27=`    cool = lerp(cool, o3, saturate(od * 4.0 - 2.0));
-comp_28=`    cool = lerp(cool, o4, saturate(od * 4.0 - 3.0));
-comp_29=`
-comp_30=`    // ---- the ageing crossfade --------------------------------------
-comp_31=`    float w = saturate(saturate(D - T) * q5 + q4 * (1.0 - T) * D);
-comp_32=`    float3 pal = lerp(hot, cool, w);
-comp_33=`
-comp_34=`    float lum = D + T * 0.55;
-comp_35=`    float3 col = pal * lum;
-comp_36=`
-comp_37=`    // glow only on the still-hot part - cooled matter does not emit
-comp_38=`    float3 b = GetBlur2(uv);
-comp_39=`    col += k3 * saturate(b.g * 1.35) * 0.30 * (1.0 - w);
-comp_40=`
-comp_41=`    col *= 1.18;
-comp_42=`    ret = col / (1.0 + col);
-comp_43=`}
+comp_2=`    float2 d = texsize.zw;
+comp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
+comp_4=`    float D = saturate(c.r * 1.20);
+comp_5=`    float T = saturate(c.g * 1.35);
+comp_6=`    float A = c.b;
+comp_7=`
+comp_8=`    // ---- incandescent (fresh) --------------------------------------
+comp_9=`    float3 k0 = float3(0.000, 0.000, 0.000);
+comp_10=`    float3 k1 = float3(0.102, 0.000, 0.200);
+comp_11=`    float3 k2 = float3(0.902, 0.243, 0.000);
+comp_12=`    float3 k3 = float3(1.000, 0.800, 0.000);
+comp_13=`    float3 k4 = float3(1.000, 1.000, 1.000);
+comp_14=`    float3 hot = lerp(k0, k1, saturate(T * 4.0));
+comp_15=`    hot = lerp(hot, k2, saturate(T * 4.0 - 1.0));
+comp_16=`    hot = lerp(hot, k3, saturate(T * 4.0 - 2.0));
+comp_17=`    hot = lerp(hot, k4, saturate(T * 4.0 - 3.0));
+comp_18=`
+comp_19=`    // ---- organic (cooled) ------------------------------------------
+comp_20=`    float3 o0 = float3(0.020, 0.039, 0.031);
+comp_21=`    float3 o1 = float3(0.180, 0.102, 0.271);
+comp_22=`    float3 o2 = float3(0.141, 0.333, 0.200);
+comp_23=`    float3 o3 = float3(0.541, 0.690, 0.290);
+comp_24=`    float3 o4 = float3(0.910, 0.878, 0.706);
+comp_25=`    float od = saturate(D + A * 0.35);
+comp_26=`    float3 cool = lerp(o0, o1, saturate(od * 4.0));
+comp_27=`    cool = lerp(cool, o2, saturate(od * 4.0 - 1.0));
+comp_28=`    cool = lerp(cool, o3, saturate(od * 4.0 - 2.0));
+comp_29=`    cool = lerp(cool, o4, saturate(od * 4.0 - 3.0));
+comp_30=`
+comp_31=`    // ---- the ageing crossfade --------------------------------------
+comp_32=`    float w = saturate(saturate(D - T) * q5 + q4 * (1.0 - T) * D);
+comp_33=`    float3 pal = lerp(hot, cool, w);
+comp_34=`
+comp_35=`    float lum = D + T * 0.55;
+comp_36=`    float3 col = pal * lum;
+comp_37=`
+comp_38=`    // glow only on the still-hot part - cooled matter does not emit
+comp_39=`    float3 b = (tex2D(sampler_main, uv - float2(3.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv + float2(3.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv - float2(0.0, 3.0 * d.y)).xyz + tex2D(sampler_main, uv + float2(0.0, 3.0 * d.y)).xyz) * 0.25;
+comp_40=`    col += k3 * saturate(b.g * 1.35) * 0.30 * (1.0 - w);
+comp_41=`
+comp_42=`    col *= 1.18;
+comp_43=`    ret = col / (1.0 + col);
+comp_44=`}

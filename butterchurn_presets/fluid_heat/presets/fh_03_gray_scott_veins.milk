@@ -2,20 +2,27 @@ MILKDROP_PRESET_VERSION=201
 PSVERSION=2
 PSVERSION_WARP=2
 PSVERSION_COMP=2
+;
+; fluid_heat 03 - Gray-Scott Veins
+;
+; A real reaction-diffusion system living in the framebuffer:
+; U' = U + (Du*lap(U) - U*V^2 + F*(1-U)) * dt
+; V' = V + (Dv*lap(V) + U*V^2 - (F+k)*V) * dt
+; R holds U (substrate), G holds V (product), B holds heat. Loud audio
+; raises the local feed rate F, so the Turing pattern grows where the
+; music has recently been active and starves where it has not.
+;
+; fDecay MUST stay at 1.0 - Milkdrop's frame decay would eat the chemical
+; state between steps and the reaction would never establish.
+;
+; F (feed) and k (kill) select the Gray-Scott regime.
+; F .035 k .065 spots     F .026 k .055 maze
+; F .014 k .045 solitons  F .062 k .061 coral
+; Drifting F on the bass walks the system between regimes live.
+; injection site orbits slowly so growth keeps finding fresh ground
+; almost no geometric warp - the chemistry is the motion here.
+; a whisper of drift keeps the pattern from locking to the pixel grid.
 [preset00]
-//
-// fluid_heat 03 - Gray-Scott Veins
-//
-// A real reaction-diffusion system living in the framebuffer:
-//     U' = U + (Du*lap(U) - U*V^2 + F*(1-U)) * dt
-//     V' = V + (Dv*lap(V) + U*V^2 - (F+k)*V) * dt
-// R holds U (substrate), G holds V (product), B holds heat. Loud audio
-// raises the local feed rate F, so the Turing pattern grows where the
-// music has recently been active and starves where it has not.
-//
-// fDecay MUST stay at 1.0 - Milkdrop's frame decay would eat the chemical
-// state between steps and the reaction would never establish.
-//
 fRating=5.000
 fGammaAdj=1.000
 fDecay=1.000
@@ -88,22 +95,15 @@ b1ed=0.250
 per_frame_1=q1 = bass_att;
 per_frame_2=q2 = mid_att;
 per_frame_3=q3 = treb_att;
-per_frame_4=// F (feed) and k (kill) select the Gray-Scott regime.
-per_frame_5=//   F .035 k .065 spots     F .026 k .055 maze
-per_frame_6=//   F .014 k .045 solitons  F .062 k .061 coral
-per_frame_7=// Drifting F on the bass walks the system between regimes live.
-per_frame_8=q4 = 0.030 + 0.012 * min(bass_att, 1.4);
-per_frame_9=q5 = 0.062 - 0.004 * min(treb_att, 1.4);
-per_frame_10=// injection site orbits slowly so growth keeps finding fresh ground
-per_frame_11=q6 = 0.5 + 0.30 * cos(time * 0.13);
-per_frame_12=q7 = 0.5 + 0.30 * sin(time * 0.17);
-per_frame_13=decay = 1.000;
-per_pixel_1=// almost no geometric warp - the chemistry is the motion here.
-per_pixel_2=// a whisper of drift keeps the pattern from locking to the pixel grid.
-per_pixel_3=dx = 0.00035 * sin(y * 5.1 + time * 0.20) * q2;
-per_pixel_4=dy = 0.00035 * cos(x * 4.7 + time * 0.17) * q2;
-per_pixel_5=zoom = 1.0;
-per_pixel_6=warp = 0.02 + 0.05 * q2;
+per_frame_4=q4 = 0.030 + 0.012 * min(bass_att, 1.4);
+per_frame_5=q5 = 0.062 - 0.004 * min(treb_att, 1.4);
+per_frame_6=q6 = 0.5 + 0.30 * cos(time * 0.13);
+per_frame_7=q7 = 0.5 + 0.30 * sin(time * 0.17);
+per_frame_8=decay = 1.000;
+per_pixel_1=dx = 0.00035 * sin(y * 5.1 + time * 0.20) * q2;
+per_pixel_2=dy = 0.00035 * cos(x * 4.7 + time * 0.17) * q2;
+per_pixel_3=zoom = 1.0;
+per_pixel_4=warp = 0.02 + 0.05 * q2;
 warp_1=`shader_body {
 warp_2=`    float2 d = texsize.zw;
 warp_3=`

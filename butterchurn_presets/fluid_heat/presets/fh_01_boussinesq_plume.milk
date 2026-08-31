@@ -2,15 +2,21 @@ MILKDROP_PRESET_VERSION=201
 PSVERSION=2
 PSVERSION_WARP=2
 PSVERSION_COMP=2
+;
+; fluid_heat 01 - Boussinesq Plume
+;
+; Heat rises. Bass drives three injection jets along the floor; hot pixels
+; sample from below in the warp shader so they climb, exactly as the
+; Boussinesq term f = (alpha*(T - T_amb) - beta*D) * up does in the solver.
+; Colour is the 5-stop incandescent blackbody LUT.
+;
+; audio -> source terms.  q1 heat, q2 momentum, q3 diffusion.
+; hotter input dissipates a little slower - long tails on loud passages
+; slow drift so the plume never settles into a fixed column
+; global slow lift, strongest near the floor where the jets live
+; lateral shear increasing with height, so plumes lean and braid
+; gentle rotation about the centre, signed by height
 [preset00]
-//
-// fluid_heat 01 - Boussinesq Plume
-//
-// Heat rises. Bass drives three injection jets along the floor; hot pixels
-// sample from below in the warp shader so they climb, exactly as the
-// Boussinesq term f = (alpha*(T - T_amb) - beta*D) * up does in the solver.
-// Colour is the 5-stop incandescent blackbody LUT.
-//
 fRating=5.000
 fGammaAdj=1.000
 fDecay=0.985
@@ -80,23 +86,17 @@ b1x=1.000
 b2x=1.000
 b3x=1.000
 b1ed=0.250
-per_frame_1=// audio -> source terms.  q1 heat, q2 momentum, q3 diffusion.
-per_frame_2=q1 = bass_att * 0.5 + bass * 0.5;
-per_frame_3=q2 = mid_att;
-per_frame_4=q3 = treb_att;
-per_frame_5=q4 = q1 * 0.6 + q2 * 0.3 + q3 * 0.1;
-per_frame_6=// hotter input dissipates a little slower - long tails on loud passages
-per_frame_7=decay = 0.982 + min(q1, 1.5) * 0.008;
-per_frame_8=warp = 0.30 + q2 * 0.55;
-per_frame_9=// slow drift so the plume never settles into a fixed column
-per_frame_10=q5 = sin(time * 0.19) * 0.5 + cos(time * 0.11) * 0.5;
-per_pixel_1=// global slow lift, strongest near the floor where the jets live
-per_pixel_2=dy = 0.0022 * (1.0 - y) * (1.0 + q1);
-per_pixel_3=// lateral shear increasing with height, so plumes lean and braid
-per_pixel_4=dx = 0.0016 * sin(y * 7.4 + time * 0.5) * (0.4 + q2) * y;
-per_pixel_5=// gentle rotation about the centre, signed by height
-per_pixel_6=rot = 0.014 * (0.5 - y) * q3;
-per_pixel_7=zoom = 1.0 + 0.0025 * q1 * (1.0 - rad);
+per_frame_1=q1 = bass_att * 0.5 + bass * 0.5;
+per_frame_2=q2 = mid_att;
+per_frame_3=q3 = treb_att;
+per_frame_4=q4 = q1 * 0.6 + q2 * 0.3 + q3 * 0.1;
+per_frame_5=decay = 0.982 + min(q1, 1.5) * 0.008;
+per_frame_6=warp = 0.30 + q2 * 0.55;
+per_frame_7=q5 = sin(time * 0.19) * 0.5 + cos(time * 0.11) * 0.5;
+per_pixel_1=dy = 0.0022 * (1.0 - y) * (1.0 + q1);
+per_pixel_2=dx = 0.0016 * sin(y * 7.4 + time * 0.5) * (0.4 + q2) * y;
+per_pixel_3=rot = 0.014 * (0.5 - y) * q3;
+per_pixel_4=zoom = 1.0 + 0.0025 * q1 * (1.0 - rad);
 warp_1=`shader_body {
 warp_2=`    float2 d = texsize.zw;
 warp_3=`    float3 lw = float3(0.50, 0.35, 0.15);   // heat weighting of RGB
@@ -124,7 +124,7 @@ warp_24=`
 warp_25=`    float3 adv = tex2D(sampler_main, uvb).xyz;
 warp_26=`
 warp_27=`    // ---- thermal diffusion ---------------------------------------
-warp_28=`    float3 dif = GetBlur1(uvb);
+warp_28=`    float3 dif = (tex2D(sampler_main, uvb - float2(d.x, 0.0)).xyz + tex2D(sampler_main, uvb + float2(d.x, 0.0)).xyz + tex2D(sampler_main, uvb - float2(0.0, d.y)).xyz + tex2D(sampler_main, uvb + float2(0.0, d.y)).xyz + tex2D(sampler_main, uvb).xyz) * 0.2;
 warp_29=`    adv = lerp(adv, dif, 0.09 + 0.16 * q3);
 warp_30=`
 warp_31=`    // ---- audio injection: three jets along the floor -------------
@@ -148,34 +148,35 @@ warp_48=`    adv *= 0.9955;
 warp_49=`    ret = adv;
 warp_50=`}
 comp_1=`shader_body {
-comp_2=`    float3 lw = float3(0.50, 0.35, 0.15);
-comp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
-comp_4=`    float t = saturate(dot(c, lw) * 1.45);
-comp_5=`
-comp_6=`    // 5-stop incandescent blackbody LUT.  Milkdrop shaders have no
-comp_7=`    // user functions, so the ramp is an inlined chain of lerps:
-comp_8=`    //   0.00 #000000  0.25 #1a0033  0.50 #e63e00
-comp_9=`    //   0.75 #ffcc00  1.00 #ffffff
-comp_10=`    float3 k0 = float3(0.000, 0.000, 0.000);
-comp_11=`    float3 k1 = float3(0.102, 0.000, 0.200);
-comp_12=`    float3 k2 = float3(0.902, 0.243, 0.000);
-comp_13=`    float3 k3 = float3(1.000, 0.800, 0.000);
-comp_14=`    float3 k4 = float3(1.000, 1.000, 1.000);
-comp_15=`    float3 pal = lerp(k0, k1, saturate(t * 4.0));
-comp_16=`    pal = lerp(pal, k2, saturate(t * 4.0 - 1.0));
-comp_17=`    pal = lerp(pal, k3, saturate(t * 4.0 - 2.0));
-comp_18=`    pal = lerp(pal, k4, saturate(t * 4.0 - 3.0));
-comp_19=`
-comp_20=`    // neighbourhood glow from a wider blur tap
-comp_21=`    float3 b = GetBlur2(uv);
-comp_22=`    float bt = saturate(dot(b, lw) * 1.45);
-comp_23=`    float3 gp = lerp(k0, k1, saturate(bt * 4.0));
-comp_24=`    gp = lerp(gp, k2, saturate(bt * 4.0 - 1.0));
-comp_25=`    gp = lerp(gp, k3, saturate(bt * 4.0 - 2.0));
-comp_26=`    gp = lerp(gp, k4, saturate(bt * 4.0 - 3.0));
-comp_27=`    pal += gp * bt * 0.38;
-comp_28=`
-comp_29=`    // Reinhard tonemap - keeps loud passages from flat-clipping
-comp_30=`    pal *= 1.15 + 0.25 * q4;
-comp_31=`    ret = pal / (1.0 + pal);
-comp_32=`}
+comp_2=`    float2 d = texsize.zw;
+comp_3=`    float3 lw = float3(0.50, 0.35, 0.15);
+comp_4=`    float3 c = tex2D(sampler_main, uv).xyz;
+comp_5=`    float t = saturate(dot(c, lw) * 1.45);
+comp_6=`
+comp_7=`    // 5-stop incandescent blackbody LUT.  Milkdrop shaders have no
+comp_8=`    // user functions, so the ramp is an inlined chain of lerps:
+comp_9=`    //   0.00 #000000  0.25 #1a0033  0.50 #e63e00
+comp_10=`    //   0.75 #ffcc00  1.00 #ffffff
+comp_11=`    float3 k0 = float3(0.000, 0.000, 0.000);
+comp_12=`    float3 k1 = float3(0.102, 0.000, 0.200);
+comp_13=`    float3 k2 = float3(0.902, 0.243, 0.000);
+comp_14=`    float3 k3 = float3(1.000, 0.800, 0.000);
+comp_15=`    float3 k4 = float3(1.000, 1.000, 1.000);
+comp_16=`    float3 pal = lerp(k0, k1, saturate(t * 4.0));
+comp_17=`    pal = lerp(pal, k2, saturate(t * 4.0 - 1.0));
+comp_18=`    pal = lerp(pal, k3, saturate(t * 4.0 - 2.0));
+comp_19=`    pal = lerp(pal, k4, saturate(t * 4.0 - 3.0));
+comp_20=`
+comp_21=`    // neighbourhood glow from a wider blur tap
+comp_22=`    float3 b = (tex2D(sampler_main, uv - float2(3.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv + float2(3.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv - float2(0.0, 3.0 * d.y)).xyz + tex2D(sampler_main, uv + float2(0.0, 3.0 * d.y)).xyz) * 0.25;
+comp_23=`    float bt = saturate(dot(b, lw) * 1.45);
+comp_24=`    float3 gp = lerp(k0, k1, saturate(bt * 4.0));
+comp_25=`    gp = lerp(gp, k2, saturate(bt * 4.0 - 1.0));
+comp_26=`    gp = lerp(gp, k3, saturate(bt * 4.0 - 2.0));
+comp_27=`    gp = lerp(gp, k4, saturate(bt * 4.0 - 3.0));
+comp_28=`    pal += gp * bt * 0.38;
+comp_29=`
+comp_30=`    // Reinhard tonemap - keeps loud passages from flat-clipping
+comp_31=`    pal *= 1.15 + 0.25 * q4;
+comp_32=`    ret = pal / (1.0 + pal);
+comp_33=`}

@@ -2,15 +2,19 @@ MILKDROP_PRESET_VERSION=201
 PSVERSION=2
 PSVERSION_WARP=2
 PSVERSION_COMP=2
+;
+; fluid_heat 02 - Vorticity Confinement
+;
+; The curl-dominated sibling of 01. Numerical diffusion eats small-scale
+; rotation; vorticity confinement measures |curl| and pushes back along
+; its gradient, restoring the swirl. Mids drive epsilon, so the image
+; curls harder through busy passages and relaxes in the gaps.
+;
+; epsilon: vorticity confinement strength, mid-driven
+; two slow orbiting attractors that seed rotation
+; solid-body rotation falling off with radius, signed by treble
+; slight inward pull so the vortices stay on screen
 [preset00]
-//
-// fluid_heat 02 - Vorticity Confinement
-//
-// The curl-dominated sibling of 01. Numerical diffusion eats small-scale
-// rotation; vorticity confinement measures |curl| and pushes back along
-// its gradient, restoring the swirl. Mids drive epsilon, so the image
-// curls harder through busy passages and relaxes in the gaps.
-//
 fRating=5.000
 fGammaAdj=1.000
 fDecay=0.980
@@ -83,19 +87,15 @@ b1ed=0.250
 per_frame_1=q1 = bass_att;
 per_frame_2=q2 = mid_att;
 per_frame_3=q3 = treb_att;
-per_frame_4=// epsilon: vorticity confinement strength, mid-driven
-per_frame_5=q4 = 0.35 + mid_att * 1.10;
-per_frame_6=// two slow orbiting attractors that seed rotation
-per_frame_7=q5 = 0.5 + 0.26 * cos(time * 0.23);
-per_frame_8=q6 = 0.5 + 0.26 * sin(time * 0.19);
-per_frame_9=q7 = 0.5 - 0.22 * cos(time * 0.17);
-per_frame_10=q8 = 0.5 - 0.22 * sin(time * 0.29);
-per_frame_11=decay = 0.977 + min(q1, 1.2) * 0.010;
-per_pixel_1=// solid-body rotation falling off with radius, signed by treble
-per_pixel_2=rot = 0.030 * (1.0 - rad) * (0.5 + q2) * (1.0 - 2.0 * (q3 > 0.9));
-per_pixel_3=// slight inward pull so the vortices stay on screen
-per_pixel_4=zoom = 1.0 + 0.0035 * (1.0 - rad) * q1;
-per_pixel_5=warp = 0.35 + q2 * 0.8;
+per_frame_4=q4 = 0.35 + mid_att * 1.10;
+per_frame_5=q5 = 0.5 + 0.26 * cos(time * 0.23);
+per_frame_6=q6 = 0.5 + 0.26 * sin(time * 0.19);
+per_frame_7=q7 = 0.5 - 0.22 * cos(time * 0.17);
+per_frame_8=q8 = 0.5 - 0.22 * sin(time * 0.29);
+per_frame_9=decay = 0.977 + min(q1, 1.2) * 0.010;
+per_pixel_1=rot = 0.030 * (1.0 - rad) * (0.5 + q2) * (1.0 - 2.0 * (q3 > 0.9));
+per_pixel_2=zoom = 1.0 + 0.0035 * (1.0 - rad) * q1;
+per_pixel_3=warp = 0.35 + q2 * 0.8;
 warp_1=`shader_body {
 warp_2=`    float2 d = texsize.zw;
 warp_3=`    float3 lw = float3(0.50, 0.35, 0.15);
@@ -131,7 +131,7 @@ warp_32=`    uvb += float2(-p1.y, p1.x) * s1 * (0.020 + 0.030 * q2);
 warp_33=`    uvb += float2( p2.y,-p2.x) * s2 * (0.020 + 0.030 * q1);
 warp_34=`
 warp_35=`    float3 adv = tex2D(sampler_main, uvb).xyz;
-warp_36=`    adv = lerp(adv, GetBlur1(uvb), 0.06 + 0.10 * q3);
+warp_36=`    adv = lerp(adv, (tex2D(sampler_main, uvb - float2(d.x, 0.0)).xyz + tex2D(sampler_main, uvb + float2(d.x, 0.0)).xyz + tex2D(sampler_main, uvb - float2(0.0, d.y)).xyz + tex2D(sampler_main, uvb + float2(0.0, d.y)).xyz + tex2D(sampler_main, uvb).xyz) * 0.2, 0.06 + 0.10 * q3);
 warp_37=`
 warp_38=`    // ---- inject at the two vortex cores ---------------------------
 warp_39=`    float3 src = float3(1.00, 0.55, 0.16) * (s1 * bass_att + s2 * mid_att) * 0.075;

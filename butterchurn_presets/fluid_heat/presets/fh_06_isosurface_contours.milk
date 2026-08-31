@@ -2,20 +2,25 @@ MILKDROP_PRESET_VERSION=201
 PSVERSION=2
 PSVERSION_WARP=2
 PSVERSION_COMP=2
+;
+; fluid_heat 06 - Isosurface Contours
+;
+; The mesh synthesizer's cousin. Marching cubes extracts a surface where a
+; scalar field crosses a threshold; in 2D that same operation is marching
+; squares, and a fragment shader can do it directly - a contour is just
+; the set of pixels where the field is within a band of the iso value.
+;
+; Four nested iso bands are drawn at once, so the fluid reads as a stack
+; of shells rather than a gradient. The threshold is the "filter cutoff":
+; raise it and only the strongest cores survive; lower it and everything
+; fuses into one membrane.
+;
+; iso threshold - the "filter cutoff". Bass opens it, so loud
+; passages swallow the inner shells and the form goes solid.
+; contour band width - thin lines when quiet, fat shells when loud
+; spacing between the four nested shells
+; orbiting source
 [preset00]
-//
-// fluid_heat 06 - Isosurface Contours
-//
-// The mesh synthesizer's cousin. Marching cubes extracts a surface where a
-// scalar field crosses a threshold; in 2D that same operation is marching
-// squares, and a fragment shader can do it directly - a contour is just
-// the set of pixels where the field is within a band of the iso value.
-//
-// Four nested iso bands are drawn at once, so the fluid reads as a stack
-// of shells rather than a gradient. The threshold is the "filter cutoff":
-// raise it and only the strongest cores survive; lower it and everything
-// fuses into one membrane.
-//
 fRating=5.000
 fGammaAdj=1.000
 fDecay=0.988
@@ -88,17 +93,12 @@ b1ed=0.250
 per_frame_1=q1 = bass_att;
 per_frame_2=q2 = mid_att;
 per_frame_3=q3 = treb_att;
-per_frame_4=// iso threshold - the "filter cutoff". Bass opens it, so loud
-per_frame_5=// passages swallow the inner shells and the form goes solid.
-per_frame_6=q4 = 0.40 - min(bass_att, 1.3) * 0.15;
-per_frame_7=// contour band width - thin lines when quiet, fat shells when loud
-per_frame_8=q5 = 0.020 + min(mid_att, 1.2) * 0.030;
-per_frame_9=// spacing between the four nested shells
-per_frame_10=q6 = 0.115 + 0.030 * sin(time * 0.19);
-per_frame_11=// orbiting source
-per_frame_12=q7 = 0.5 + 0.27 * cos(time * 0.157);
-per_frame_13=q8 = 0.5 + 0.27 * sin(time * 0.121);
-per_frame_14=decay = 0.986 + min(q1, 1.2) * 0.008;
+per_frame_4=q4 = 0.40 - min(bass_att, 1.3) * 0.15;
+per_frame_5=q5 = 0.020 + min(mid_att, 1.2) * 0.030;
+per_frame_6=q6 = 0.115 + 0.030 * sin(time * 0.19);
+per_frame_7=q7 = 0.5 + 0.27 * cos(time * 0.157);
+per_frame_8=q8 = 0.5 + 0.27 * sin(time * 0.121);
+per_frame_9=decay = 0.986 + min(q1, 1.2) * 0.008;
 per_pixel_1=dy = 0.0018 * (1.0 - y) * (0.5 + q1);
 per_pixel_2=dx = 0.0011 * sin(y * 5.6 + time * 0.36) * q2;
 per_pixel_3=rot = 0.012 * (1.0 - rad) * (0.3 + q2) * sin(time * 0.13);
@@ -125,7 +125,7 @@ warp_18=`    float3 adv = tex2D(sampler_main, uvb).xyz;
 warp_19=`
 warp_20=`    // heavier smoothing than the other presets: contour extraction
 warp_21=`    // wants a smooth field or the bands break into speckle
-warp_22=`    adv = lerp(adv, GetBlur1(uvb), 0.20 + 0.16 * q3);
+warp_22=`    adv = lerp(adv, (tex2D(sampler_main, uvb - float2(d.x, 0.0)).xyz + tex2D(sampler_main, uvb + float2(d.x, 0.0)).xyz + tex2D(sampler_main, uvb - float2(0.0, d.y)).xyz + tex2D(sampler_main, uvb + float2(0.0, d.y)).xyz + tex2D(sampler_main, uvb).xyz) * 0.2, 0.20 + 0.16 * q3);
 warp_23=`
 warp_24=`    float2 p = uv - float2(q7, q8);
 warp_25=`    float s = exp(-dot(p, p) / 0.0075);
