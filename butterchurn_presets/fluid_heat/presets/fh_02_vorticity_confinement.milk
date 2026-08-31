@@ -1,0 +1,169 @@
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+[preset00]
+//
+// fluid_heat 02 - Vorticity Confinement
+//
+// The curl-dominated sibling of 01. Numerical diffusion eats small-scale
+// rotation; vorticity confinement measures |curl| and pushes back along
+// its gradient, restoring the swirl. Mids drive epsilon, so the image
+// curls harder through busy passages and relaxes in the gaps.
+//
+fRating=5.000
+fGammaAdj=1.000
+fDecay=0.980
+fVideoEchoZoom=0.998
+fVideoEchoAlpha=0.180
+nVideoEchoOrientation=3
+nWaveMode=2
+bAdditiveWaves=1
+bWaveDots=0
+bWaveThick=1
+bModWaveAlphaByVolume=1
+bMaximizeWaveColor=1
+bTexWrap=1
+bDarkenCenter=0
+bRedBlueStereo=0
+bBrighten=0
+bDarken=0
+bSolarize=0
+bInvert=0
+fWaveAlpha=0.180
+fWaveScale=1.300
+fWaveSmoothing=0.630
+fWaveParam=0.000
+fModWaveAlphaStart=0.710
+fModWaveAlphaEnd=1.300
+fWarpAnimSpeed=1.400
+fWarpScale=1.800
+fZoomExponent=1.000
+fShader=0.000
+zoom=0.999
+rot=0.000
+cx=0.500
+cy=0.500
+dx=0.000
+dy=0.000
+warp=0.600
+sx=1.000
+sy=1.000
+wave_r=1.000
+wave_g=0.600
+wave_b=0.200
+wave_x=0.500
+wave_y=0.500
+ob_size=0.000
+ob_r=0.000
+ob_g=0.000
+ob_b=0.000
+ob_a=0.000
+ib_size=0.000
+ib_r=0.000
+ib_g=0.000
+ib_b=0.000
+ib_a=0.000
+nMotionVectorsX=0.000
+nMotionVectorsY=0.000
+mv_dx=0.000
+mv_dy=0.000
+mv_l=0.000
+mv_r=0.000
+mv_g=0.000
+mv_b=0.000
+mv_a=0.000
+b1n=0.000
+b2n=0.000
+b3n=0.000
+b1x=1.000
+b2x=1.000
+b3x=1.000
+b1ed=0.250
+per_frame_1=q1 = bass_att;
+per_frame_2=q2 = mid_att;
+per_frame_3=q3 = treb_att;
+per_frame_4=// epsilon: vorticity confinement strength, mid-driven
+per_frame_5=q4 = 0.35 + mid_att * 1.10;
+per_frame_6=// two slow orbiting attractors that seed rotation
+per_frame_7=q5 = 0.5 + 0.26 * cos(time * 0.23);
+per_frame_8=q6 = 0.5 + 0.26 * sin(time * 0.19);
+per_frame_9=q7 = 0.5 - 0.22 * cos(time * 0.17);
+per_frame_10=q8 = 0.5 - 0.22 * sin(time * 0.29);
+per_frame_11=decay = 0.977 + min(q1, 1.2) * 0.010;
+per_pixel_1=// solid-body rotation falling off with radius, signed by treble
+per_pixel_2=rot = 0.030 * (1.0 - rad) * (0.5 + q2) * (1.0 - 2.0 * (q3 > 0.9));
+per_pixel_3=// slight inward pull so the vortices stay on screen
+per_pixel_4=zoom = 1.0 + 0.0035 * (1.0 - rad) * q1;
+per_pixel_5=warp = 0.35 + q2 * 0.8;
+warp_1=`shader_body {
+warp_2=`    float2 d = texsize.zw;
+warp_3=`    float3 lw = float3(0.50, 0.35, 0.15);
+warp_4=`
+warp_5=`    // ---- curl of the scalar field at 4 neighbours ------------------
+warp_6=`    float hl = dot(tex2D(sampler_main, uv - float2(d.x, 0.0)).xyz, lw);
+warp_7=`    float hr = dot(tex2D(sampler_main, uv + float2(d.x, 0.0)).xyz, lw);
+warp_8=`    float hd = dot(tex2D(sampler_main, uv - float2(0.0, d.y)).xyz, lw);
+warp_9=`    float hu = dot(tex2D(sampler_main, uv + float2(0.0, d.y)).xyz, lw);
+warp_10=`
+warp_11=`    // w stands in for the vorticity magnitude at this cell
+warp_12=`    float w  = (hr - hl) - (hu - hd);
+warp_13=`
+warp_14=`    // ---- gradient of |w| over a wider stencil ----------------------
+warp_15=`    float2 d2 = d * 2.0;
+warp_16=`    float wl = abs(dot(tex2D(sampler_main, uv - float2(d2.x, 0.0)).xyz, lw) - hl);
+warp_17=`    float wr = abs(dot(tex2D(sampler_main, uv + float2(d2.x, 0.0)).xyz, lw) - hr);
+warp_18=`    float wd = abs(dot(tex2D(sampler_main, uv - float2(0.0, d2.y)).xyz, lw) - hd);
+warp_19=`    float wu = abs(dot(tex2D(sampler_main, uv + float2(0.0, d2.y)).xyz, lw) - hu);
+warp_20=`    float2 eta = float2(wr - wl, wu - wd);
+warp_21=`    eta = eta / (length(eta) + 0.00001);        // normalise
+warp_22=`
+warp_23=`    // ---- confinement force  N x w  --------------------------------
+warp_24=`    float2 force = float2(eta.y * w, -eta.x * w);
+warp_25=`    float2 uvb = uv + force * (0.030 * q4);
+warp_26=`
+warp_27=`    // ---- two orbiting vortices ------------------------------------
+warp_28=`    float2 p1 = uv - float2(q5, q6);
+warp_29=`    float2 p2 = uv - float2(q7, q8);
+warp_30=`    float s1 = exp(-dot(p1, p1) / 0.055);
+warp_31=`    float s2 = exp(-dot(p2, p2) / 0.055);
+warp_32=`    uvb += float2(-p1.y, p1.x) * s1 * (0.020 + 0.030 * q2);
+warp_33=`    uvb += float2( p2.y,-p2.x) * s2 * (0.020 + 0.030 * q1);
+warp_34=`
+warp_35=`    float3 adv = tex2D(sampler_main, uvb).xyz;
+warp_36=`    adv = lerp(adv, GetBlur1(uvb), 0.06 + 0.10 * q3);
+warp_37=`
+warp_38=`    // ---- inject at the two vortex cores ---------------------------
+warp_39=`    float3 src = float3(1.00, 0.55, 0.16) * (s1 * bass_att + s2 * mid_att) * 0.075;
+warp_40=`    adv += src * saturate(1.0 - adv);
+warp_41=`
+warp_42=`    adv *= 0.9965;
+warp_43=`    ret = adv;
+warp_44=`}
+comp_1=`shader_body {
+comp_2=`    float3 lw = float3(0.50, 0.35, 0.15);
+comp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
+comp_4=`    float t = saturate(dot(c, lw) * 1.55);
+comp_5=`
+comp_6=`    float3 k0 = float3(0.000, 0.000, 0.000);
+comp_7=`    float3 k1 = float3(0.102, 0.000, 0.200);
+comp_8=`    float3 k2 = float3(0.902, 0.243, 0.000);
+comp_9=`    float3 k3 = float3(1.000, 0.800, 0.000);
+comp_10=`    float3 k4 = float3(1.000, 1.000, 1.000);
+comp_11=`    float3 pal = lerp(k0, k1, saturate(t * 4.0));
+comp_12=`    pal = lerp(pal, k2, saturate(t * 4.0 - 1.0));
+comp_13=`    pal = lerp(pal, k3, saturate(t * 4.0 - 2.0));
+comp_14=`    pal = lerp(pal, k4, saturate(t * 4.0 - 3.0));
+comp_15=`
+comp_16=`    // edge lift: shear boundaries between vortices read as filaments
+comp_17=`    float2 d = texsize.zw;
+comp_18=`    float el = dot(tex2D(sampler_main, uv - float2(d.x, 0.0)).xyz, lw);
+comp_19=`    float er = dot(tex2D(sampler_main, uv + float2(d.x, 0.0)).xyz, lw);
+comp_20=`    float eu = dot(tex2D(sampler_main, uv + float2(0.0, d.y)).xyz, lw);
+comp_21=`    float ed = dot(tex2D(sampler_main, uv - float2(0.0, d.y)).xyz, lw);
+comp_22=`    float edge = saturate(length(float2(er - el, eu - ed)) * 7.0);
+comp_23=`    pal += float3(1.00, 0.86, 0.60) * edge * 0.30 * t;
+comp_24=`
+comp_25=`    pal *= 1.20;
+comp_26=`    ret = pal / (1.0 + pal);
+comp_27=`}

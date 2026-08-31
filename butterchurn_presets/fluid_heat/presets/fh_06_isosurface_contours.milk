@@ -1,0 +1,208 @@
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+[preset00]
+//
+// fluid_heat 06 - Isosurface Contours
+//
+// The mesh synthesizer's cousin. Marching cubes extracts a surface where a
+// scalar field crosses a threshold; in 2D that same operation is marching
+// squares, and a fragment shader can do it directly - a contour is just
+// the set of pixels where the field is within a band of the iso value.
+//
+// Four nested iso bands are drawn at once, so the fluid reads as a stack
+// of shells rather than a gradient. The threshold is the "filter cutoff":
+// raise it and only the strongest cores survive; lower it and everything
+// fuses into one membrane.
+//
+fRating=5.000
+fGammaAdj=1.000
+fDecay=0.988
+fVideoEchoZoom=1.000
+fVideoEchoAlpha=0.000
+nVideoEchoOrientation=0
+nWaveMode=3
+bAdditiveWaves=0
+bWaveDots=0
+bWaveThick=1
+bModWaveAlphaByVolume=1
+bMaximizeWaveColor=1
+bTexWrap=0
+bDarkenCenter=0
+bRedBlueStereo=0
+bBrighten=0
+bDarken=0
+bSolarize=0
+bInvert=0
+fWaveAlpha=0.100
+fWaveScale=1.200
+fWaveSmoothing=0.850
+fWaveParam=0.000
+fModWaveAlphaStart=0.750
+fModWaveAlphaEnd=1.000
+fWarpAnimSpeed=0.600
+fWarpScale=1.100
+fZoomExponent=1.000
+fShader=0.000
+zoom=1.000
+rot=0.000
+cx=0.500
+cy=0.500
+dx=0.000
+dy=0.000
+warp=0.220
+sx=1.000
+sy=1.000
+wave_r=0.900
+wave_g=0.900
+wave_b=0.900
+wave_x=0.500
+wave_y=0.500
+ob_size=0.000
+ob_r=0.000
+ob_g=0.000
+ob_b=0.000
+ob_a=0.000
+ib_size=0.000
+ib_r=0.000
+ib_g=0.000
+ib_b=0.000
+ib_a=0.000
+nMotionVectorsX=0.000
+nMotionVectorsY=0.000
+mv_dx=0.000
+mv_dy=0.000
+mv_l=0.000
+mv_r=0.000
+mv_g=0.000
+mv_b=0.000
+mv_a=0.000
+b1n=0.000
+b2n=0.000
+b3n=0.000
+b1x=1.000
+b2x=1.000
+b3x=1.000
+b1ed=0.250
+per_frame_1=q1 = bass_att;
+per_frame_2=q2 = mid_att;
+per_frame_3=q3 = treb_att;
+per_frame_4=// iso threshold - the "filter cutoff". Bass opens it, so loud
+per_frame_5=// passages swallow the inner shells and the form goes solid.
+per_frame_6=q4 = 0.40 - min(bass_att, 1.3) * 0.15;
+per_frame_7=// contour band width - thin lines when quiet, fat shells when loud
+per_frame_8=q5 = 0.020 + min(mid_att, 1.2) * 0.030;
+per_frame_9=// spacing between the four nested shells
+per_frame_10=q6 = 0.115 + 0.030 * sin(time * 0.19);
+per_frame_11=// orbiting source
+per_frame_12=q7 = 0.5 + 0.27 * cos(time * 0.157);
+per_frame_13=q8 = 0.5 + 0.27 * sin(time * 0.121);
+per_frame_14=decay = 0.986 + min(q1, 1.2) * 0.008;
+per_pixel_1=dy = 0.0018 * (1.0 - y) * (0.5 + q1);
+per_pixel_2=dx = 0.0011 * sin(y * 5.6 + time * 0.36) * q2;
+per_pixel_3=rot = 0.012 * (1.0 - rad) * (0.3 + q2) * sin(time * 0.13);
+per_pixel_4=zoom = 1.0 + 0.0018 * q1 * (1.0 - rad);
+per_pixel_5=warp = 0.15 + 0.40 * q2;
+warp_1=`shader_body {
+warp_2=`    float2 d = texsize.zw;
+warp_3=`    float3 lw = float3(0.50, 0.35, 0.15);
+warp_4=`
+warp_5=`    float3 c = tex2D(sampler_main, uv).xyz;
+warp_6=`    float heat = dot(c, lw);
+warp_7=`
+warp_8=`    float2 uvb = uv;
+warp_9=`    uvb.y += heat * heat * 0.0032;
+warp_10=`
+warp_11=`    float hl = dot(tex2D(sampler_main, uv - float2(d.x, 0.0)).xyz, lw);
+warp_12=`    float hr = dot(tex2D(sampler_main, uv + float2(d.x, 0.0)).xyz, lw);
+warp_13=`    float hd = dot(tex2D(sampler_main, uv - float2(0.0, d.y)).xyz, lw);
+warp_14=`    float hu = dot(tex2D(sampler_main, uv + float2(0.0, d.y)).xyz, lw);
+warp_15=`    float2 g = float2(hr - hl, hu - hd);
+warp_16=`    uvb += float2(-g.y, g.x) * (0.013 + 0.030 * q2);
+warp_17=`
+warp_18=`    float3 adv = tex2D(sampler_main, uvb).xyz;
+warp_19=`
+warp_20=`    // heavier smoothing than the other presets: contour extraction
+warp_21=`    // wants a smooth field or the bands break into speckle
+warp_22=`    adv = lerp(adv, GetBlur1(uvb), 0.20 + 0.16 * q3);
+warp_23=`
+warp_24=`    float2 p = uv - float2(q7, q8);
+warp_25=`    float s = exp(-dot(p, p) / 0.0075);
+warp_26=`    float2 pb = uv - float2(0.5, 0.95);
+warp_27=`    float sb = exp(-dot(pb, pb) / 0.0050);
+warp_28=`    float inj = s * (0.40 + mid_att * 0.60) + sb * bass_att * 0.9;
+warp_29=`    adv += float3(1.00, 0.74, 0.34) * inj * 0.26 * saturate(1.0 - adv);
+warp_30=`
+warp_31=`    ret = adv * 0.9960;
+warp_32=`}
+comp_1=`shader_body {
+comp_2=`    float2 d = texsize.zw;
+comp_3=`    float3 lw = float3(0.50, 0.35, 0.15);
+comp_4=`    float3 c = tex2D(sampler_main, uv).xyz;
+comp_5=`    float f = dot(c, lw) * 1.40;
+comp_6=`
+comp_7=`    // ---- gradient magnitude: normalises band width in screen space --
+comp_8=`    // Without dividing by |grad| the shells bunch up where the field is
+comp_9=`    // steep and smear where it is flat.
+comp_10=`    float fl = dot(tex2D(sampler_main, uv - float2(d.x, 0.0)).xyz, lw) * 1.40;
+comp_11=`    float fr = dot(tex2D(sampler_main, uv + float2(d.x, 0.0)).xyz, lw) * 1.40;
+comp_12=`    float fd = dot(tex2D(sampler_main, uv - float2(0.0, d.y)).xyz, lw) * 1.40;
+comp_13=`    float fu = dot(tex2D(sampler_main, uv + float2(0.0, d.y)).xyz, lw) * 1.40;
+comp_14=`    float gm = length(float2(fr - fl, fu - fd)) * 0.5 + 0.0015;
+comp_15=`
+comp_16=`    float3 k0 = float3(0.000, 0.000, 0.000);
+comp_17=`    float3 k1 = float3(0.102, 0.000, 0.200);
+comp_18=`    float3 k2 = float3(0.902, 0.243, 0.000);
+comp_19=`    float3 k3 = float3(1.000, 0.800, 0.000);
+comp_20=`    float3 k4 = float3(1.000, 1.000, 1.000);
+comp_21=`
+comp_22=`    float3 col = float3(0.0, 0.0, 0.0);
+comp_23=`
+comp_24=`    // ---- four nested iso bands (marching squares, shaded) ------------
+comp_25=`    float lvl = q4;
+comp_26=`    float band = abs(f - lvl) / gm;
+comp_27=`    float sh = saturate(1.0 - band * q5 * 260.0);
+comp_28=`    float tt = saturate(lvl * 1.6);
+comp_29=`    float3 pp = lerp(k0, k1, saturate(tt * 4.0));
+comp_30=`    pp = lerp(pp, k2, saturate(tt * 4.0 - 1.0));
+comp_31=`    pp = lerp(pp, k3, saturate(tt * 4.0 - 2.0));
+comp_32=`    pp = lerp(pp, k4, saturate(tt * 4.0 - 3.0));
+comp_33=`    col += pp * sh;
+comp_34=`
+comp_35=`    lvl = q4 + q6;
+comp_36=`    band = abs(f - lvl) / gm;
+comp_37=`    sh = saturate(1.0 - band * q5 * 260.0);
+comp_38=`    tt = saturate(lvl * 1.6);
+comp_39=`    pp = lerp(k0, k1, saturate(tt * 4.0));
+comp_40=`    pp = lerp(pp, k2, saturate(tt * 4.0 - 1.0));
+comp_41=`    pp = lerp(pp, k3, saturate(tt * 4.0 - 2.0));
+comp_42=`    pp = lerp(pp, k4, saturate(tt * 4.0 - 3.0));
+comp_43=`    col += pp * sh;
+comp_44=`
+comp_45=`    lvl = q4 + q6 * 2.0;
+comp_46=`    band = abs(f - lvl) / gm;
+comp_47=`    sh = saturate(1.0 - band * q5 * 260.0);
+comp_48=`    tt = saturate(lvl * 1.6);
+comp_49=`    pp = lerp(k0, k1, saturate(tt * 4.0));
+comp_50=`    pp = lerp(pp, k2, saturate(tt * 4.0 - 1.0));
+comp_51=`    pp = lerp(pp, k3, saturate(tt * 4.0 - 2.0));
+comp_52=`    pp = lerp(pp, k4, saturate(tt * 4.0 - 3.0));
+comp_53=`    col += pp * sh;
+comp_54=`
+comp_55=`    lvl = q4 + q6 * 3.0;
+comp_56=`    band = abs(f - lvl) / gm;
+comp_57=`    sh = saturate(1.0 - band * q5 * 260.0);
+comp_58=`    tt = saturate(lvl * 1.6);
+comp_59=`    pp = lerp(k0, k1, saturate(tt * 4.0));
+comp_60=`    pp = lerp(pp, k2, saturate(tt * 4.0 - 1.0));
+comp_61=`    pp = lerp(pp, k3, saturate(tt * 4.0 - 2.0));
+comp_62=`    pp = lerp(pp, k4, saturate(tt * 4.0 - 3.0));
+comp_63=`    col += pp * sh;
+comp_64=`
+comp_65=`    // faint interior fill so the shells read as solid, not wireframe
+comp_66=`    col += pp * saturate(f - q4) * 0.14;
+comp_67=`
+comp_68=`    col *= 1.10;
+comp_69=`    ret = col / (1.0 + col);
+comp_70=`}

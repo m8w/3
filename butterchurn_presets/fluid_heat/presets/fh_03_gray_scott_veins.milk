@@ -1,0 +1,184 @@
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+[preset00]
+//
+// fluid_heat 03 - Gray-Scott Veins
+//
+// A real reaction-diffusion system living in the framebuffer:
+//     U' = U + (Du*lap(U) - U*V^2 + F*(1-U)) * dt
+//     V' = V + (Dv*lap(V) + U*V^2 - (F+k)*V) * dt
+// R holds U (substrate), G holds V (product), B holds heat. Loud audio
+// raises the local feed rate F, so the Turing pattern grows where the
+// music has recently been active and starves where it has not.
+//
+// fDecay MUST stay at 1.0 - Milkdrop's frame decay would eat the chemical
+// state between steps and the reaction would never establish.
+//
+fRating=5.000
+fGammaAdj=1.000
+fDecay=1.000
+fVideoEchoZoom=1.000
+fVideoEchoAlpha=0.000
+nVideoEchoOrientation=0
+nWaveMode=7
+bAdditiveWaves=1
+bWaveDots=1
+bWaveThick=0
+bModWaveAlphaByVolume=1
+bMaximizeWaveColor=0
+bTexWrap=1
+bDarkenCenter=0
+bRedBlueStereo=0
+bBrighten=0
+bDarken=0
+bSolarize=0
+bInvert=0
+fWaveAlpha=0.060
+fWaveScale=0.700
+fWaveSmoothing=0.500
+fWaveParam=0.000
+fModWaveAlphaStart=0.800
+fModWaveAlphaEnd=1.200
+fWarpAnimSpeed=0.400
+fWarpScale=1.000
+fZoomExponent=1.000
+fShader=0.000
+zoom=1.000
+rot=0.000
+cx=0.500
+cy=0.500
+dx=0.000
+dy=0.000
+warp=0.030
+sx=1.000
+sy=1.000
+wave_r=0.100
+wave_g=0.900
+wave_b=0.400
+wave_x=0.500
+wave_y=0.500
+ob_size=0.000
+ob_r=0.000
+ob_g=0.000
+ob_b=0.000
+ob_a=0.000
+ib_size=0.000
+ib_r=0.000
+ib_g=0.000
+ib_b=0.000
+ib_a=0.000
+nMotionVectorsX=0.000
+nMotionVectorsY=0.000
+mv_dx=0.000
+mv_dy=0.000
+mv_l=0.000
+mv_r=0.000
+mv_g=0.000
+mv_b=0.000
+mv_a=0.000
+b1n=0.000
+b2n=0.000
+b3n=0.000
+b1x=1.000
+b2x=1.000
+b3x=1.000
+b1ed=0.250
+per_frame_1=q1 = bass_att;
+per_frame_2=q2 = mid_att;
+per_frame_3=q3 = treb_att;
+per_frame_4=// F (feed) and k (kill) select the Gray-Scott regime.
+per_frame_5=//   F .035 k .065 spots     F .026 k .055 maze
+per_frame_6=//   F .014 k .045 solitons  F .062 k .061 coral
+per_frame_7=// Drifting F on the bass walks the system between regimes live.
+per_frame_8=q4 = 0.030 + 0.012 * min(bass_att, 1.4);
+per_frame_9=q5 = 0.062 - 0.004 * min(treb_att, 1.4);
+per_frame_10=// injection site orbits slowly so growth keeps finding fresh ground
+per_frame_11=q6 = 0.5 + 0.30 * cos(time * 0.13);
+per_frame_12=q7 = 0.5 + 0.30 * sin(time * 0.17);
+per_frame_13=decay = 1.000;
+per_pixel_1=// almost no geometric warp - the chemistry is the motion here.
+per_pixel_2=// a whisper of drift keeps the pattern from locking to the pixel grid.
+per_pixel_3=dx = 0.00035 * sin(y * 5.1 + time * 0.20) * q2;
+per_pixel_4=dy = 0.00035 * cos(x * 4.7 + time * 0.17) * q2;
+per_pixel_5=zoom = 1.0;
+per_pixel_6=warp = 0.02 + 0.05 * q2;
+warp_1=`shader_body {
+warp_2=`    float2 d = texsize.zw;
+warp_3=`
+warp_4=`    float3 c = tex2D(sampler_main, uv).xyz;
+warp_5=`    float U = c.r;
+warp_6=`    float V = c.g;
+warp_7=`    float H = c.b;
+warp_8=`
+warp_9=`    // ---- 9-point Laplacian (4-neighbour .2, diagonal .05) ----------
+warp_10=`    float3 nL  = tex2D(sampler_main, uv + float2(-d.x,  0.0)).xyz;
+warp_11=`    float3 nR  = tex2D(sampler_main, uv + float2( d.x,  0.0)).xyz;
+warp_12=`    float3 nD  = tex2D(sampler_main, uv + float2( 0.0, -d.y)).xyz;
+warp_13=`    float3 nU  = tex2D(sampler_main, uv + float2( 0.0,  d.y)).xyz;
+warp_14=`    float3 nDL = tex2D(sampler_main, uv + float2(-d.x, -d.y)).xyz;
+warp_15=`    float3 nDR = tex2D(sampler_main, uv + float2( d.x, -d.y)).xyz;
+warp_16=`    float3 nUL = tex2D(sampler_main, uv + float2(-d.x,  d.y)).xyz;
+warp_17=`    float3 nUR = tex2D(sampler_main, uv + float2( d.x,  d.y)).xyz;
+warp_18=`    float3 lap = -c
+warp_19=`               + 0.20 * (nL + nR + nD + nU)
+warp_20=`               + 0.05 * (nDL + nDR + nUL + nUR);
+warp_21=`
+warp_22=`    // ---- audio raises the local feed rate --------------------------
+warp_23=`    float Floc = q4 + H * 0.045;
+warp_24=`    float kloc = q5;
+warp_25=`
+warp_26=`    // ---- Gray-Scott step ------------------------------------------
+warp_27=`    float uvv = U * V * V;
+warp_28=`    float dU = 0.16 * lap.r - uvv + Floc * (1.0 - U);
+warp_29=`    float dV = 0.08 * lap.g + uvv - (Floc + kloc) * V;
+warp_30=`
+warp_31=`    U = saturate(U + dU);
+warp_32=`    V = saturate(V + dV);
+warp_33=`
+warp_34=`    // ---- heat channel: diffuses and cools, seeds V ------------------
+warp_35=`    H = saturate(H * 0.970 + lap.b * 0.22);
+warp_36=`
+warp_37=`    // ---- injection: one orbiting site plus a bass ring -------------
+warp_38=`    float2 p = uv - float2(q6, q7);
+warp_39=`    float s = exp(-dot(p, p) / 0.0028);
+warp_40=`    float ring = exp(-pow(length(uv - 0.5) - 0.30, 2.0) / 0.0016);
+warp_41=`    float inj = s * (0.35 + bass_att * 0.65) + ring * treb_att * 0.25;
+warp_42=`
+warp_43=`    V = saturate(V + inj * 0.55 * (1.0 - V));
+warp_44=`    U = saturate(U - inj * 0.25 * U);
+warp_45=`    H = saturate(H + inj * 0.60 * (1.0 - H));
+warp_46=`
+warp_47=`    ret = float3(U, V, H);
+warp_48=`}
+comp_1=`shader_body {
+comp_2=`    float3 c = tex2D(sampler_main, uv).xyz;
+comp_3=`    float V = c.g;             // product - the visible pattern
+comp_4=`    float H = c.b;             // heat
+comp_5=`
+comp_6=`    // vein mask: the leading edge of V is the growing front
+comp_7=`    float vein = smoothstep(0.12, 0.42, V);
+comp_8=`    float core = smoothstep(0.30, 0.62, V);
+comp_9=`
+comp_10=`    // organic palette - forest / vein-purple / moss / lichen / bone
+comp_11=`    float3 o0 = float3(0.020, 0.039, 0.031);
+comp_12=`    float3 o1 = float3(0.180, 0.102, 0.271);
+comp_13=`    float3 o2 = float3(0.141, 0.333, 0.200);
+comp_14=`    float3 o3 = float3(0.541, 0.690, 0.290);
+comp_15=`    float3 o4 = float3(0.910, 0.878, 0.706);
+comp_16=`    float t = saturate(V * 1.9);
+comp_17=`    float3 pal = lerp(o0, o1, saturate(t * 4.0));
+comp_18=`    pal = lerp(pal, o2, saturate(t * 4.0 - 1.0));
+comp_19=`    pal = lerp(pal, o3, saturate(t * 4.0 - 2.0));
+comp_20=`    pal = lerp(pal, o4, saturate(t * 4.0 - 3.0));
+comp_21=`
+comp_22=`    // where the audio is hot, bleed toward incandescent
+comp_23=`    float3 hot = lerp(float3(0.902, 0.243, 0.000),
+comp_24=`                     float3(1.000, 0.800, 0.000), saturate(H * 1.6));
+comp_25=`    pal = lerp(pal, hot, saturate(H * 1.25) * 0.55);
+comp_26=`
+comp_27=`    float3 col = pal * (0.25 + vein * 0.95) + float3(0.35, 0.45, 0.28) * core * 0.30;
+comp_28=`    col *= 1.25;
+comp_29=`    ret = col / (1.0 + col);
+comp_30=`}
