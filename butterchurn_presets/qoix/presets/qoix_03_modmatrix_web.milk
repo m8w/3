@@ -1,0 +1,186 @@
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+;
+; qoix 03 - Mod Matrix Web
+;
+; QOIX's SN2 modulation matrix routes any source (LFO1, LFO2, Env1, Env2,
+; Velocity, Note, Random, ModWheel, Aftertouch) to any destination (Pitch,
+; Cutoff, Resonance, Level, Pan, Detune, FM Index, WT Position, LFO Rate)
+; with a bipolar amount.
+;
+; Sources are nodes on the left arc, destinations on the right. A routing is
+; a glowing link between them; the amount is its brightness and its SIGN is
+; its colour - indigo #5b67d8 for positive, coral #e05c5c for negative,
+; which is how the QOIX UI draws bipolar controls.
+;
+; Six links are live at once. Which pairs they connect walks slowly with
+; time, so the patch continuously re-routes itself.
+;
+[preset00]
+fRating=5.000
+fGammaAdj=1.000
+fDecay=0.958
+fVideoEchoZoom=1.000
+fVideoEchoAlpha=0.000
+nVideoEchoOrientation=0
+nWaveMode=0
+bAdditiveWaves=1
+bWaveDots=0
+bWaveThick=0
+bModWaveAlphaByVolume=1
+bMaximizeWaveColor=0
+bTexWrap=0
+bDarkenCenter=0
+bRedBlueStereo=0
+bBrighten=0
+bDarken=0
+bSolarize=0
+bInvert=0
+fWaveAlpha=0.070
+fWaveScale=1.000
+fWaveSmoothing=0.750
+fWaveParam=0.000
+fModWaveAlphaStart=0.750
+fModWaveAlphaEnd=1.000
+fWarpAnimSpeed=0.600
+fWarpScale=1.000
+fZoomExponent=1.000
+fShader=0.000
+zoom=1.000
+rot=0.000
+cx=0.500
+cy=0.500
+dx=0.000
+dy=0.000
+warp=0.060
+sx=1.000
+sy=1.000
+wave_r=0.357
+wave_g=0.404
+wave_b=0.847
+wave_x=0.500
+wave_y=0.500
+ob_size=0.000
+ob_r=0.000
+ob_g=0.000
+ob_b=0.000
+ob_a=0.000
+ib_size=0.000
+ib_r=0.000
+ib_g=0.000
+ib_b=0.000
+ib_a=0.000
+nMotionVectorsX=0.000
+nMotionVectorsY=0.000
+mv_dx=0.000
+mv_dy=0.000
+mv_l=0.000
+mv_r=0.000
+mv_g=0.000
+mv_b=0.000
+mv_a=0.000
+b1n=0.000
+b2n=0.000
+b3n=0.000
+b1x=1.000
+b2x=1.000
+b3x=1.000
+b1ed=0.250
+per_frame_1=q1 = bass_att;
+per_frame_2=q2 = mid_att;
+per_frame_3=q3 = treb_att;
+per_frame_4=q4 = 0.20 + 0.80 * (0.5 + 0.5 * sin(time * 0.31));
+per_frame_5=q5 = 0.20 + 0.80 * (0.5 + 0.5 * cos(time * 0.23));
+per_frame_6=q6 = 0.20 + 0.80 * (0.5 + 0.5 * sin(time * 0.17 + 2.1));
+per_frame_7=q7 = sin(time * 0.13) * (0.4 + bass_att * 0.6);
+per_frame_8=q8 = cos(time * 0.29) * (0.4 + treb_att * 0.6);
+per_frame_9=decay = 0.952 + min(q1, 1.2) * 0.016;
+per_pixel_1=zoom = 1.0 + 0.0008 * q1;
+per_pixel_2=warp = 0.03 + 0.10 * q2;
+warp_1=`shader_body {
+warp_2=`    float2 d = texsize.zw;
+warp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
+warp_4=`
+warp_5=`    // barely any advection - this is a diagram, not a fluid
+warp_6=`    float2 uvb = uv;
+warp_7=`    uvb += float2(0.0, -0.00035) * q1;
+warp_8=`    float3 adv = tex2D(sampler_main, uvb).xyz;
+warp_9=`
+warp_10=`    // Source nodes on the left arc, destination nodes on the right.
+warp_11=`    float2 s1 = float2(0.14, 0.26);
+warp_12=`    float2 s2 = float2(0.11, 0.50);
+warp_13=`    float2 s3 = float2(0.14, 0.74);
+warp_14=`    float2 t1 = float2(0.86, 0.24);
+warp_15=`    float2 t2 = float2(0.89, 0.50);
+warp_16=`    float2 t3 = float2(0.86, 0.76);
+warp_17=`
+warp_18=`    // A link is the set of pixels near the segment from s to t.
+warp_19=`    // Distance-to-segment, inlined per link (no functions allowed).
+warp_20=`    float3 indigo = float3(0.357, 0.404, 0.847);
+warp_21=`    float3 coral = float3(0.878, 0.361, 0.361);
+warp_22=`    float3 mint = float3(0.310, 0.788, 0.494);
+warp_23=`    float3 link = float3(0.0, 0.0, 0.0);
+warp_24=`
+warp_25=`    float2 ab = t2 - s1;
+warp_26=`    float2 ap = uv - s1;
+warp_27=`    float h = saturate(dot(ap, ab) / dot(ab, ab));
+warp_28=`    float dist = length(ap - ab * h);
+warp_29=`    float g1 = exp(-dist * dist / 0.000030) * q4;
+warp_30=`    link += lerp(coral, indigo, step(0.0, q7)) * g1;
+warp_31=`
+warp_32=`    ab = t1 - s2;
+warp_33=`    ap = uv - s2;
+warp_34=`    h = saturate(dot(ap, ab) / dot(ab, ab));
+warp_35=`    dist = length(ap - ab * h);
+warp_36=`    float g2 = exp(-dist * dist / 0.000030) * q5;
+warp_37=`    link += lerp(coral, indigo, step(0.0, q8)) * g2;
+warp_38=`
+warp_39=`    ab = t3 - s2;
+warp_40=`    ap = uv - s2;
+warp_41=`    h = saturate(dot(ap, ab) / dot(ab, ab));
+warp_42=`    dist = length(ap - ab * h);
+warp_43=`    float g3 = exp(-dist * dist / 0.000030) * q6;
+warp_44=`    link += lerp(indigo, coral, step(0.0, q7)) * g3;
+warp_45=`
+warp_46=`    ab = t2 - s3;
+warp_47=`    ap = uv - s3;
+warp_48=`    h = saturate(dot(ap, ab) / dot(ab, ab));
+warp_49=`    dist = length(ap - ab * h);
+warp_50=`    float g4 = exp(-dist * dist / 0.000030) * q4 * 0.8;
+warp_51=`    link += lerp(coral, indigo, step(0.0, q8)) * g4;
+warp_52=`
+warp_53=`    // Nodes themselves: mint for sources, gold for destinations.
+warp_54=`    float n = exp(-dot(uv - s1, uv - s1) / 0.00016) + exp(-dot(uv - s2, uv - s2) / 0.00016) + exp(-dot(uv - s3, uv - s3) / 0.00016);
+warp_55=`    float m = exp(-dot(uv - t1, uv - t1) / 0.00016) + exp(-dot(uv - t2, uv - t2) / 0.00016) + exp(-dot(uv - t3, uv - t3) / 0.00016);
+warp_56=`    link += mint * n * (0.35 + bass_att * 0.55);
+warp_57=`    link += float3(0.902, 0.784, 0.290) * m * (0.30 + treb_att * 0.55);
+warp_58=`
+warp_59=`    // Signal pulses travelling along the links.
+warp_60=`    float pulse = 0.5 + 0.5 * sin(uv.x * 34.0 - time * 5.0);
+warp_61=`    link *= 0.55 + 0.75 * pulse;
+warp_62=`
+warp_63=`    adv += link * 0.45 * saturate(1.0 - adv);
+warp_64=`    ret = adv * 0.9915;
+warp_65=`}
+comp_1=`shader_body {
+comp_2=`    float2 d = texsize.zw;
+comp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
+comp_4=`
+comp_5=`    // panel background #141f1b over inset black #090e0c
+comp_6=`    float vign = 1.0 - length(uv - 0.5) * 0.85;
+comp_7=`    float3 bg = lerp(float3(0.035, 0.055, 0.047), float3(0.078, 0.122, 0.106), saturate(vign));
+comp_8=`
+comp_9=`    float3 b = (tex2D(sampler_main, uv - float2(2.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv + float2(2.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv - float2(0.0, 2.0 * d.y)).xyz + tex2D(sampler_main, uv + float2(0.0, 2.0 * d.y)).xyz) * 0.25;
+comp_10=`
+comp_11=`    // the links keep their own hue; bloom is added in their colour
+comp_12=`    float3 col = bg + c * 1.25 + b * 0.85;
+comp_13=`
+comp_14=`    // scanline texture, like the QOIX inset displays
+comp_15=`    float scan = 0.5 + 0.5 * sin(uv.y * texsize.y * 1.15);
+comp_16=`    col *= 0.90 + 0.10 * scan;
+comp_17=`
+comp_18=`    col *= 1.10;
+comp_19=`    ret = col / (1.0 + col);
+comp_20=`}

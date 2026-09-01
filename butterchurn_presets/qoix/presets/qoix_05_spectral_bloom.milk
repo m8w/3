@@ -1,0 +1,150 @@
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+;
+; qoix 05 - Spectral Bloom
+;
+; QOIX's spectrum display draws its bars as hsl(hue, 70%, 25 + v*45%) with a
+; shadowBlur glow. That exact mapping is here, but wrapped into a radial
+; field: angle is frequency, radius is time, so the spectrum spirals outward
+; and history is visible as rings.
+;
+; HSL to RGB is inlined - Milkdrop pixel shaders have no user functions, so
+; the hue ramp is the standard saturate(abs(frac(h + k) * 6 - 3) - 1) form
+; with the chroma term applied around lightness.
+;
+[preset00]
+fRating=5.000
+fGammaAdj=1.000
+fDecay=0.981
+fVideoEchoZoom=1.001
+fVideoEchoAlpha=0.100
+nVideoEchoOrientation=3
+nWaveMode=1
+bAdditiveWaves=1
+bWaveDots=0
+bWaveThick=1
+bModWaveAlphaByVolume=1
+bMaximizeWaveColor=1
+bTexWrap=0
+bDarkenCenter=0
+bRedBlueStereo=0
+bBrighten=0
+bDarken=0
+bSolarize=0
+bInvert=0
+fWaveAlpha=0.130
+fWaveScale=1.000
+fWaveSmoothing=0.700
+fWaveParam=0.000
+fModWaveAlphaStart=0.750
+fModWaveAlphaEnd=1.000
+fWarpAnimSpeed=0.700
+fWarpScale=1.200
+fZoomExponent=1.000
+fShader=0.000
+zoom=1.002
+rot=0.000
+cx=0.500
+cy=0.500
+dx=0.000
+dy=0.000
+warp=0.150
+sx=1.000
+sy=1.000
+wave_r=0.700
+wave_g=0.700
+wave_b=0.900
+wave_x=0.500
+wave_y=0.500
+ob_size=0.000
+ob_r=0.000
+ob_g=0.000
+ob_b=0.000
+ob_a=0.000
+ib_size=0.000
+ib_r=0.000
+ib_g=0.000
+ib_b=0.000
+ib_a=0.000
+nMotionVectorsX=0.000
+nMotionVectorsY=0.000
+mv_dx=0.000
+mv_dy=0.000
+mv_l=0.000
+mv_r=0.000
+mv_g=0.000
+mv_b=0.000
+mv_a=0.000
+b1n=0.000
+b2n=0.000
+b3n=0.000
+b1x=1.000
+b2x=1.000
+b3x=1.000
+b1ed=0.250
+per_frame_1=q1 = bass_att;
+per_frame_2=q2 = mid_att;
+per_frame_3=q3 = treb_att;
+per_frame_4=q4 = 0.70;
+per_frame_5=q5 = 0.25 + min(bass_att + treb_att, 2.0) * 0.22;
+per_frame_6=q6 = time * 0.09;
+per_frame_7=q7 = 0.10 + min(mid_att, 1.5) * 0.16;
+per_frame_8=decay = 0.976 + min(q1, 1.2) * 0.010;
+per_pixel_1=zoom = 1.0 + 0.0055 * (0.4 + q1) - 0.0015 * rad;
+per_pixel_2=rot = 0.006 * (0.3 + q2) * sin(time * 0.21);
+per_pixel_3=warp = 0.08 + 0.28 * q2;
+warp_1=`shader_body {
+warp_2=`    float2 d = texsize.zw;
+warp_3=`    float2 p = uv - 0.5;
+warp_4=`    float r = length(p);
+warp_5=`    float ang = atan2(p.y, p.x);
+warp_6=`
+warp_7=`    // outward drift: the ring at radius r is the spectrum r seconds ago
+warp_8=`    float2 uvb = uv - p * (0.0075 + 0.0060 * q1);
+warp_9=`    float3 adv = tex2D(sampler_main, uvb).xyz;
+warp_10=`
+warp_11=`    // Deposit a fresh spectrum on the inner ring. Angle maps to
+warp_12=`    // frequency: 0 at the right, sweeping the full circle.
+warp_13=`    float hue = frac(ang * 0.159155 + 0.5);
+warp_14=`    float amp = q1 * exp(-pow(hue - 0.08, 2.0) / 0.010)
+warp_15=`              + q2 * exp(-pow(hue - 0.42, 2.0) / 0.022)
+warp_16=`              + q3 * exp(-pow(hue - 0.78, 2.0) / 0.016);
+warp_17=`    amp = saturate(amp * 1.25);
+warp_18=`
+warp_19=`    float band = exp(-pow(r - 0.085, 2.0) / 0.00055);
+warp_20=`
+warp_21=`    // hsl(hue, 70%, 25 + amp*45) inlined
+warp_22=`    float L = 0.25 + amp * 0.45;
+warp_23=`    float S = q4;
+warp_24=`    float3 k = frac(float3(hue, hue, hue) + float3(0.0, 0.66667, 0.33333));
+warp_25=`    float3 huergb = saturate(abs(k * 6.0 - 3.0) - 1.0);
+warp_26=`    float chroma = (1.0 - abs(L * 2.0 - 1.0)) * S;
+warp_27=`    float3 bar = (huergb - 0.5) * chroma + L;
+warp_28=`
+warp_29=`    adv += bar * band * amp * 0.55 * saturate(1.0 - adv);
+warp_30=`
+warp_31=`    ret = adv * 0.9955;
+warp_32=`}
+comp_1=`shader_body {
+comp_2=`    float2 d = texsize.zw;
+comp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
+comp_4=`
+comp_5=`    // wide neon bloom - this is the shadowBlur in the QOIX scopes
+comp_6=`    float3 b1 = (tex2D(sampler_main, uv - float2(3.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv + float2(3.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv - float2(0.0, 3.0 * d.y)).xyz + tex2D(sampler_main, uv + float2(0.0, 3.0 * d.y)).xyz) * 0.25;
+comp_7=`    float3 b2 = (tex2D(sampler_main, uv - float2(9.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv + float2(9.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv - float2(0.0, 9.0 * d.y)).xyz + tex2D(sampler_main, uv + float2(0.0, 9.0 * d.y)).xyz) * 0.25;
+comp_8=`
+comp_9=`    float3 col = c * 1.30 + b1 * 0.70 + b2 * 0.40;
+comp_10=`
+comp_11=`    // sit it on the QOIX panel colour rather than pure black
+comp_12=`    float vign = saturate(1.0 - length(uv - 0.5) * 1.15);
+comp_13=`    col += float3(0.035, 0.055, 0.047) * vign;
+comp_14=`
+comp_15=`    // indigo lift in the darks keeps it in the QOIX register instead of
+comp_16=`    // reading as a generic rainbow visualiser
+comp_17=`    col += float3(0.357, 0.404, 0.847) * saturate(0.30 - dot(col, float3(0.33, 0.33, 0.33))) * 0.35;
+comp_18=`
+comp_19=`    col *= 1.10;
+comp_20=`    ret = col / (1.0 + col);
+comp_21=`}

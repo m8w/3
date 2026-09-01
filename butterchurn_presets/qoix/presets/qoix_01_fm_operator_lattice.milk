@@ -1,0 +1,188 @@
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+;
+; qoix 01 - FM Operator Lattice
+;
+; QOIX's FM engine is DX7-style: four operators, eight algorithms, each
+; operator a carrier (goes to output) or a modulator (bends another's
+; frequency). This draws that.
+;
+; Four ring sources sit at the operator positions. Modulators do not draw
+; themselves - they warp the ring of the operator they feed, exactly as an
+; FM modulator bends a carrier's phase. Carriers glow mint; modulators are
+; dim indigo. Turning up bass raises the modulation index, and the carrier
+; rings break into sidebands.
+;
+; Algorithm (which operator feeds which) walks with the treble, so the
+; routing itself re-patches as the track moves.
+;
+; Palette: QOIX UI - near-black #09090d, indigo #5b67d8 / glow #7b86f5,
+; mint carrier #4fc97e, gold #e6c84a.
+;
+[preset00]
+fRating=5.000
+fGammaAdj=1.000
+fDecay=0.972
+fVideoEchoZoom=1.000
+fVideoEchoAlpha=0.000
+nVideoEchoOrientation=0
+nWaveMode=2
+bAdditiveWaves=1
+bWaveDots=0
+bWaveThick=1
+bModWaveAlphaByVolume=1
+bMaximizeWaveColor=1
+bTexWrap=0
+bDarkenCenter=0
+bRedBlueStereo=0
+bBrighten=0
+bDarken=0
+bSolarize=0
+bInvert=0
+fWaveAlpha=0.140
+fWaveScale=1.100
+fWaveSmoothing=0.700
+fWaveParam=0.000
+fModWaveAlphaStart=0.750
+fModWaveAlphaEnd=1.000
+fWarpAnimSpeed=0.800
+fWarpScale=1.200
+fZoomExponent=1.000
+fShader=0.000
+zoom=1.000
+rot=0.000
+cx=0.500
+cy=0.500
+dx=0.000
+dy=0.000
+warp=0.180
+sx=1.000
+sy=1.000
+wave_r=0.360
+wave_g=0.520
+wave_b=0.960
+wave_x=0.500
+wave_y=0.500
+ob_size=0.000
+ob_r=0.000
+ob_g=0.000
+ob_b=0.000
+ob_a=0.000
+ib_size=0.000
+ib_r=0.000
+ib_g=0.000
+ib_b=0.000
+ib_a=0.000
+nMotionVectorsX=0.000
+nMotionVectorsY=0.000
+mv_dx=0.000
+mv_dy=0.000
+mv_l=0.000
+mv_r=0.000
+mv_g=0.000
+mv_b=0.000
+mv_a=0.000
+b1n=0.000
+b2n=0.000
+b3n=0.000
+b1x=1.000
+b2x=1.000
+b3x=1.000
+b1ed=0.250
+per_frame_1=q1 = bass_att;
+per_frame_2=q2 = mid_att;
+per_frame_3=q3 = treb_att;
+per_frame_4=q4 = 1.0 + min(bass_att, 2.0) * 3.2;
+per_frame_5=alg = floor((time * 0.11 + treb_att * 0.5) % 8);
+per_frame_6=q5 = 1.0 + alg * 0.5;
+per_frame_7=q6 = 2.0 + (alg % 3);
+per_frame_8=q7 = 0.5 + 0.30 * cos(time * 0.19);
+per_frame_9=q8 = 0.5 + 0.30 * sin(time * 0.23);
+per_frame_10=decay = 0.968 + min(q1, 1.2) * 0.012;
+per_pixel_1=rot = 0.020 * (1.0 - rad) * (0.3 + q2);
+per_pixel_2=zoom = 1.0 + 0.0030 * (0.5 - rad) * (0.4 + q1);
+per_pixel_3=warp = 0.10 + 0.35 * q2;
+warp_1=`shader_body {
+warp_2=`    float2 d = texsize.zw;
+warp_3=`    float2 p = uv - 0.5;
+warp_4=`    float r = length(p);
+warp_5=`    float a = atan2(p.y, p.x);
+warp_6=`
+warp_7=`    float3 c = tex2D(sampler_main, uv).xyz;
+warp_8=`
+warp_9=`    // Four operators on a square. A and C are carriers (drawn),
+warp_10=`    // B and D are modulators (they only bend).
+warp_11=`    float2 opA = float2(0.32, 0.34);
+warp_12=`    float2 opB = float2(0.68, 0.34);
+warp_13=`    float2 opC = float2(0.32, 0.66);
+warp_14=`    float2 opD = float2(0.68, 0.66);
+warp_15=`
+warp_16=`    // Modulator phase at this pixel: distance to the modulator, times
+warp_17=`    // its ratio. This is the FM index term.
+warp_18=`    float mB = sin(length(uv - opB) * q5 * 62.0 - time * 2.1);
+warp_19=`    float mD = sin(length(uv - opD) * q6 * 47.0 + time * 1.7);
+warp_20=`
+warp_21=`    // Bend the sampling position by the modulator output.
+warp_22=`    float2 uvb = uv;
+warp_23=`    uvb += float2(mB, mD) * (0.0016 * q4);
+warp_24=`
+warp_25=`    // Slow orbital drift so the lattice never sits still.
+warp_26=`    uvb += float2(-p.y, p.x) * (0.0030 + 0.0075 * q2);
+warp_27=`
+warp_28=`    float3 adv = tex2D(sampler_main, uvb).xyz;
+warp_29=`
+warp_30=`    // Carrier rings: sidebands appear as the index rises.
+warp_31=`    float dA = length(uv - opA);
+warp_32=`    float dC = length(uv - opC);
+warp_33=`    float ringA = exp(-pow(dA - 0.11, 2.0) / 0.00035);
+warp_34=`    float ringC = exp(-pow(dC - 0.11, 2.0) / 0.00035);
+warp_35=`    float sbA = 0.5 + 0.5 * sin(dA * 210.0 - time * 3.0 + mB * q4);
+warp_36=`    float sbC = 0.5 + 0.5 * sin(dC * 210.0 + time * 2.4 + mD * q4);
+warp_37=`
+warp_38=`    float3 mint = float3(0.310, 0.788, 0.494);
+warp_39=`    float3 indigo = float3(0.357, 0.404, 0.847);
+warp_40=`    float3 srcA = mint * (ringA * sbA * bass_att);
+warp_41=`    float3 srcC = indigo * (ringC * sbC * mid_att);
+warp_42=`
+warp_43=`    adv += (srcA + srcC) * 0.55 * saturate(1.0 - adv);
+warp_44=`
+warp_45=`    ret = adv * 0.9930;
+warp_46=`}
+comp_1=`shader_body {
+comp_2=`    float2 d = texsize.zw;
+comp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
+comp_4=`    float v = dot(c, float3(0.36, 0.48, 0.30));
+comp_5=`
+comp_6=`    // QOIX UI palette, dark to bright:
+comp_7=`    //   #09090d panel black -> #2a4038 border -> #5b67d8 accent
+comp_8=`    //   -> #7b86f5 glow -> #eef6f3 bright
+comp_9=`    float3 u0 = float3(0.035, 0.035, 0.051);
+comp_10=`    float3 u1 = float3(0.165, 0.251, 0.220);
+comp_11=`    float3 u2 = float3(0.357, 0.404, 0.847);
+comp_12=`    float3 u3 = float3(0.482, 0.525, 0.961);
+comp_13=`    float3 u4 = float3(0.933, 0.965, 0.953);
+comp_14=`    float t = saturate(v * 1.65);
+comp_15=`    float3 pal = lerp(u0, u1, saturate(t * 4.0));
+comp_16=`    pal = lerp(pal, u2, saturate(t * 4.0 - 1.0));
+comp_17=`    pal = lerp(pal, u3, saturate(t * 4.0 - 2.0));
+comp_18=`    pal = lerp(pal, u4, saturate(t * 4.0 - 3.0));
+comp_19=`
+comp_20=`    // Mint stays mint: the green channel carries carrier energy and is
+comp_21=`    // pushed back in rather than being averaged into the ramp.
+comp_22=`    float3 mint = float3(0.310, 0.788, 0.494);
+comp_23=`    pal = lerp(pal, mint, saturate(c.g - c.b) * 0.85);
+comp_24=`
+comp_25=`    // Neon bloom - the shadowBlur look from the QOIX scopes, done as a
+comp_26=`    // 4-tap ring rather than a real blur.
+comp_27=`    float3 b = (tex2D(sampler_main, uv - float2(3.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv + float2(3.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv - float2(0.0, 3.0 * d.y)).xyz + tex2D(sampler_main, uv + float2(0.0, 3.0 * d.y)).xyz) * 0.25;
+comp_28=`    float bv = dot(b, float3(0.36, 0.48, 0.30));
+comp_29=`    pal += float3(0.482, 0.525, 0.961) * bv * 0.55;
+comp_30=`
+comp_31=`    // Gold rim on the very hottest cores (#e6c84a).
+comp_32=`    pal += float3(0.902, 0.784, 0.290) * saturate(v * 2.0 - 1.4) * 0.60;
+comp_33=`
+comp_34=`    pal *= 1.12;
+comp_35=`    ret = pal / (1.0 + pal);
+comp_36=`}

@@ -1,0 +1,175 @@
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+;
+; qoix 02 - Wavetable Scan
+;
+; QOIX's wavetable oscillator scans a bank of single-cycle waveforms; its
+; Oxford mode is an OSCar-style additive oscillator with 16 harmonic
+; amplitudes. Both are here.
+;
+; The screen is the table. A scan head sweeps vertically at the morph rate;
+; where it sits, the sixteen harmonic bands light. Harmonic n is a
+; horizontal band whose brightness is that harmonic's amplitude, and whose
+; spatial frequency is n - so higher harmonics stripe finer, exactly as they
+; would in the wavetable itself.
+;
+; Bass drives the scan position, treble the harmonic tilt (bright = more
+; high partials), mid the morph speed.
+;
+[preset00]
+fRating=5.000
+fGammaAdj=1.000
+fDecay=0.965
+fVideoEchoZoom=1.000
+fVideoEchoAlpha=0.000
+nVideoEchoOrientation=0
+nWaveMode=7
+bAdditiveWaves=1
+bWaveDots=1
+bWaveThick=0
+bModWaveAlphaByVolume=1
+bMaximizeWaveColor=1
+bTexWrap=1
+bDarkenCenter=0
+bRedBlueStereo=0
+bBrighten=0
+bDarken=0
+bSolarize=0
+bInvert=0
+fWaveAlpha=0.090
+fWaveScale=0.800
+fWaveSmoothing=0.600
+fWaveParam=0.000
+fModWaveAlphaStart=0.800
+fModWaveAlphaEnd=1.100
+fWarpAnimSpeed=0.500
+fWarpScale=1.000
+fZoomExponent=1.000
+fShader=0.000
+zoom=1.000
+rot=0.000
+cx=0.500
+cy=0.500
+dx=0.000
+dy=0.000
+warp=0.080
+sx=1.000
+sy=1.000
+wave_r=0.310
+wave_g=0.788
+wave_b=0.494
+wave_x=0.500
+wave_y=0.500
+ob_size=0.000
+ob_r=0.000
+ob_g=0.000
+ob_b=0.000
+ob_a=0.000
+ib_size=0.000
+ib_r=0.000
+ib_g=0.000
+ib_b=0.000
+ib_a=0.000
+nMotionVectorsX=0.000
+nMotionVectorsY=0.000
+mv_dx=0.000
+mv_dy=0.000
+mv_l=0.000
+mv_r=0.000
+mv_g=0.000
+mv_b=0.000
+mv_a=0.000
+b1n=0.000
+b2n=0.000
+b3n=0.000
+b1x=1.000
+b2x=1.000
+b3x=1.000
+b1ed=0.250
+per_frame_1=q1 = bass_att;
+per_frame_2=q2 = mid_att;
+per_frame_3=q3 = treb_att;
+per_frame_4=q4 = 0.5 + 0.42 * sin(time * (0.20 + mid_att * 0.55));
+per_frame_5=q5 = 0.35 + min(treb_att, 1.5) * 0.55;
+per_frame_6=q6 = 0.020 + min(mid_att, 1.2) * 0.045;
+per_frame_7=q7 = 1.0 + min(bass_att, 2.0) * 5.0;
+per_frame_8=decay = 0.960 + min(q1, 1.2) * 0.014;
+per_pixel_1=dx = 0.0009 * sin(y * 9.0 + time * 0.5) * q2;
+per_pixel_2=zoom = 1.0 + 0.0012 * q1;
+per_pixel_3=warp = 0.04 + 0.16 * q2;
+warp_1=`shader_body {
+warp_2=`    float2 d = texsize.zw;
+warp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
+warp_4=`
+warp_5=`    // Gentle vertical drift: the table scrolls under the scan head.
+warp_6=`    float2 uvb = uv;
+warp_7=`    uvb.y += 0.0016 + 0.0022 * q1;
+warp_8=`    uvb.x += sin(uv.y * 24.0 + time * 0.7) * 0.00055 * q2;
+warp_9=`
+warp_10=`    float3 adv = tex2D(sampler_main, uvb).xyz;
+warp_11=`
+warp_12=`    // ---- the scan head ---------------------------------------------
+warp_13=`    // A soft horizontal line at the current wavetable position.
+warp_14=`    float head = exp(-pow(uv.y - q4, 2.0) / q6);
+warp_15=`
+warp_16=`    // ---- sixteen harmonic bands ------------------------------------
+warp_17=`    // Harmonic n stripes at spatial frequency n. Amplitude follows a
+warp_18=`    // 1/n rolloff tilted by treble, which is the Oxford harmonic slider
+warp_19=`    // bank collapsed into one control.
+warp_20=`    float acc = 0.0;
+warp_21=`    float h1 = 0.5 + 0.5 * sin(uv.x * 6.2832 * 1.0 + time * 0.9);
+warp_22=`    float h2 = 0.5 + 0.5 * sin(uv.x * 6.2832 * 2.0 - time * 0.7);
+warp_23=`    float h3 = 0.5 + 0.5 * sin(uv.x * 6.2832 * 3.0 + time * 1.3);
+warp_24=`    float h5 = 0.5 + 0.5 * sin(uv.x * 6.2832 * 5.0 - time * 1.1);
+warp_25=`    float h8 = 0.5 + 0.5 * sin(uv.x * 6.2832 * 8.0 + time * 1.9);
+warp_26=`    float h13 = 0.5 + 0.5 * sin(uv.x * 6.2832 * 13.0 - time * 2.3);
+warp_27=`    float h16 = 0.5 + 0.5 * sin(uv.x * 6.2832 * 16.0 + time * 2.9);
+warp_28=`    acc = h1 * 1.000 + h2 * 0.500 + h3 * 0.333 + h5 * 0.200 + h8 * 0.125 + h13 * 0.077 + h16 * 0.062;
+warp_29=`
+warp_30=`    // treble tilts the rolloff toward the top of the series
+warp_31=`    float tilt = h8 * q5 * 0.35 + h13 * q5 * 0.25 + h16 * q5 * 0.20;
+warp_32=`    acc = acc * 0.42 + tilt;
+warp_33=`
+warp_34=`    // ---- deposit at the scan head ----------------------------------
+warp_35=`    float3 mint = float3(0.310, 0.788, 0.494);
+warp_36=`    float3 indigo = float3(0.357, 0.404, 0.847);
+warp_37=`    float3 tone = lerp(mint, indigo, saturate(q5));
+warp_38=`    float dep = head * acc * (0.20 + bass_att * 0.55);
+warp_39=`    adv += tone * dep * saturate(1.0 - adv);
+warp_40=`
+warp_41=`    // A thin gold reading line right on the head.
+warp_42=`    float line = exp(-pow(uv.y - q4, 2.0) / 0.000045);
+warp_43=`    adv += float3(0.902, 0.784, 0.290) * line * 0.30;
+warp_44=`
+warp_45=`    ret = adv * 0.9945;
+warp_46=`}
+comp_1=`shader_body {
+comp_2=`    float2 d = texsize.zw;
+comp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
+comp_4=`    float v = dot(c, float3(0.36, 0.48, 0.30));
+comp_5=`
+comp_6=`    float3 u0 = float3(0.035, 0.035, 0.051);
+comp_7=`    float3 u1 = float3(0.078, 0.122, 0.106);
+comp_8=`    float3 u2 = float3(0.310, 0.788, 0.494);
+comp_9=`    float3 u3 = float3(0.482, 0.525, 0.961);
+comp_10=`    float3 u4 = float3(0.933, 0.965, 0.953);
+comp_11=`    float t = saturate(v * 1.75);
+comp_12=`    float3 pal = lerp(u0, u1, saturate(t * 4.0));
+comp_13=`    pal = lerp(pal, u2, saturate(t * 4.0 - 1.0));
+comp_14=`    pal = lerp(pal, u3, saturate(t * 4.0 - 2.0));
+comp_15=`    pal = lerp(pal, u4, saturate(t * 4.0 - 3.0));
+comp_16=`
+comp_17=`    // horizontal-only bloom: keeps the harmonic striping crisp
+comp_18=`    // vertically while letting the bands glow sideways
+comp_19=`    float3 b = (tex2D(sampler_main, uv - float2(4.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv + float2(4.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv - float2(8.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv + float2(8.0 * d.x, 0.0)).xyz) * 0.25;
+comp_20=`    pal += float3(0.482, 0.525, 0.961) * dot(b, float3(0.36, 0.48, 0.30)) * 0.50;
+comp_21=`
+comp_22=`    // faint inset grid, like the QOIX table readout
+comp_23=`    float grid = saturate(1.0 - abs(frac(uv.x * 16.0) - 0.5) * 24.0) * 0.045;
+comp_24=`    pal += float3(0.165, 0.251, 0.220) * grid;
+comp_25=`
+comp_26=`    pal *= 1.14;
+comp_27=`    ret = pal / (1.0 + pal);
+comp_28=`}

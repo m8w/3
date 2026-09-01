@@ -1,0 +1,169 @@
+MILKDROP_PRESET_VERSION=201
+PSVERSION=2
+PSVERSION_WARP=2
+PSVERSION_COMP=2
+;
+; qoix 06 - Rave Strobe
+;
+; The loud one. Beat detection in per_frame (peak tracker with a decaying
+; threshold, the same shape QOIX's envelope followers use) gates a hard
+; strobe. On a hit the field snaps to full indigo or mint and the geometry
+; jumps to a new rotation; between hits it decays fast and dark.
+;
+; This is deliberately high-contrast and fast. If it is too aggressive,
+; raise fDecay toward 0.99 and drop q6 (strobe depth).
+;
+; PHOTOSENSITIVITY WARNING: this preset flashes at beat rate, which for
+; most dance material is 2-4 Hz. That is below the 3-60 Hz band most
+; associated with photosensitive seizures at the low end but not safely
+; clear of it. Do not put this in an unattended public rotation.
+;
+[preset00]
+fRating=5.000
+fGammaAdj=1.000
+fDecay=0.930
+fVideoEchoZoom=0.996
+fVideoEchoAlpha=0.220
+nVideoEchoOrientation=3
+nWaveMode=2
+bAdditiveWaves=1
+bWaveDots=0
+bWaveThick=1
+bModWaveAlphaByVolume=1
+bMaximizeWaveColor=1
+bTexWrap=1
+bDarkenCenter=0
+bRedBlueStereo=0
+bBrighten=0
+bDarken=0
+bSolarize=0
+bInvert=0
+fWaveAlpha=0.200
+fWaveScale=1.400
+fWaveSmoothing=0.500
+fWaveParam=0.000
+fModWaveAlphaStart=0.700
+fModWaveAlphaEnd=1.400
+fWarpAnimSpeed=1.800
+fWarpScale=2.000
+fZoomExponent=1.000
+fShader=0.000
+zoom=1.000
+rot=0.000
+cx=0.500
+cy=0.500
+dx=0.000
+dy=0.000
+warp=0.500
+sx=1.000
+sy=1.000
+wave_r=0.482
+wave_g=0.525
+wave_b=0.961
+wave_x=0.500
+wave_y=0.500
+ob_size=0.000
+ob_r=0.000
+ob_g=0.000
+ob_b=0.000
+ob_a=0.000
+ib_size=0.000
+ib_r=0.000
+ib_g=0.000
+ib_b=0.000
+ib_a=0.000
+nMotionVectorsX=0.000
+nMotionVectorsY=0.000
+mv_dx=0.000
+mv_dy=0.000
+mv_l=0.000
+mv_r=0.000
+mv_g=0.000
+mv_b=0.000
+mv_a=0.000
+b1n=0.000
+b2n=0.000
+b3n=0.000
+b1x=1.000
+b2x=1.000
+b3x=1.000
+b1ed=0.250
+per_frame_1=decmed = pow(0.96, 30 / max(fps, 1));
+per_frame_2=decslow = pow(0.99, 30 / max(fps, 1));
+per_frame_3=beat = max(max(bass, mid), treb);
+per_frame_4=avg = avg * decslow + beat * (1 - decslow);
+per_frame_5=isbeat = above(beat, 0.5 + avg + pk) * above(time, t0 + 0.16);
+per_frame_6=t0 = isbeat * time + (1 - isbeat) * t0;
+per_frame_7=pk = isbeat * beat + (1 - isbeat) * pk * decmed;
+per_frame_8=flash = isbeat * 1.0 + (1 - isbeat) * flash * 0.72;
+per_frame_9=idx = (idx + isbeat) % 4;
+per_frame_10=q1 = bass_att;
+per_frame_11=q2 = mid_att;
+per_frame_12=q3 = treb_att;
+per_frame_13=q4 = flash;
+per_frame_14=q5 = idx;
+per_frame_15=q6 = 0.85;
+per_frame_16=q7 = 0.5 + 0.34 * cos(idx * 1.571 + 0.4);
+per_frame_17=q8 = 0.5 + 0.34 * sin(idx * 1.571 + 0.4);
+per_frame_18=decay = 0.905 + flash * 0.070;
+per_frame_19=warp = 0.30 + flash * 1.10;
+per_pixel_1=rot = 0.055 * (1.0 - rad) * (0.2 + q4) * (1 - 2 * equal(q5 % 2, 0));
+per_pixel_2=zoom = 1.0 + 0.020 * q4 * (1.0 - rad) - 0.004;
+per_pixel_3=dx = 0.004 * q4 * cos(q5 * 1.571);
+per_pixel_4=dy = 0.004 * q4 * sin(q5 * 1.571);
+warp_1=`shader_body {
+warp_2=`    float2 d = texsize.zw;
+warp_3=`    float2 p = uv - 0.5;
+warp_4=`    float r = length(p);
+warp_5=`    float ang = atan2(p.y, p.x);
+warp_6=`
+warp_7=`    // hard radial kick on the beat, plus a standing rotation
+warp_8=`    float2 uvb = uv;
+warp_9=`    uvb -= p * (0.010 * q4);
+warp_10=`    uvb += float2(-p.y, p.x) * (0.006 + 0.030 * q4);
+warp_11=`
+warp_12=`    float3 adv = tex2D(sampler_main, uvb).xyz;
+warp_13=`
+warp_14=`    // Strobe wedges: the count steps with the beat index, so every hit
+warp_15=`    // re-cuts the geometry rather than just brightening it.
+warp_16=`    float nwedge = 3.0 + q5 * 2.0;
+warp_17=`    float wedge = step(0.55, 0.5 + 0.5 * sin(ang * nwedge + q5 * 1.571));
+warp_18=`
+warp_19=`    // radial gate that snaps outward on the hit
+warp_20=`    float shell = exp(-pow(r - (0.10 + q4 * 0.30), 2.0) / 0.0022);
+warp_21=`
+warp_22=`    float3 indigo = float3(0.357, 0.404, 0.847);
+warp_23=`    float3 mint = float3(0.310, 0.788, 0.494);
+warp_24=`    float3 coral = float3(0.878, 0.361, 0.361);
+warp_25=`
+warp_26=`    // colour alternates on the beat index - the QOIX bipolar look
+warp_27=`    float3 tone = lerp(indigo, mint, saturate(fmod(q5, 2.0)));
+warp_28=`    tone = lerp(tone, coral, saturate(fmod(q5, 4.0) - 2.0) * 0.55);
+warp_29=`
+warp_30=`    float hit = shell * wedge * q4 * q6;
+warp_31=`    adv += tone * hit * 0.95 * saturate(1.0 - adv);
+warp_32=`
+warp_33=`    // centre core flash
+warp_34=`    adv += float3(0.933, 0.965, 0.953) * exp(-r * r / 0.0016) * q4 * 0.55;
+warp_35=`
+warp_36=`    ret = adv * 0.9880;
+warp_37=`}
+comp_1=`shader_body {
+comp_2=`    float2 d = texsize.zw;
+comp_3=`    float3 c = tex2D(sampler_main, uv).xyz;
+comp_4=`
+comp_5=`    float3 b = (tex2D(sampler_main, uv - float2(5.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv + float2(5.0 * d.x, 0.0)).xyz + tex2D(sampler_main, uv - float2(0.0, 5.0 * d.y)).xyz + tex2D(sampler_main, uv + float2(0.0, 5.0 * d.y)).xyz) * 0.25;
+comp_6=`
+comp_7=`    float3 col = c * 1.45 + b * 0.95;
+comp_8=`
+comp_9=`    // crush the darks so the off-beat really is dark - this is what
+comp_10=`    // makes the strobe read as a strobe rather than a pulse
+comp_11=`    float v = dot(col, float3(0.33, 0.33, 0.33));
+comp_12=`    col *= saturate(v * 2.6 - 0.10);
+comp_13=`
+comp_14=`    // gold edge on the very brightest wedges
+comp_15=`    col += float3(0.902, 0.784, 0.290) * saturate(v * 2.2 - 1.5) * 0.70;
+comp_16=`
+comp_17=`    col *= 1.20 + q4 * 0.35;
+comp_18=`    ret = col / (1.0 + col);
+comp_19=`}
