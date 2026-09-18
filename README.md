@@ -125,6 +125,38 @@ blend all breathe on the identical song arcs, and each new Performance turns the
 mix over on the downbeat. Full MIDI details:
 [scripts/sn2_note_generator.md](scripts/sn2_note_generator.md).
 
+### No Supernova? Run the stream anyway
+
+`sn2_chaos8_runs.py` needs the synth — it auto-selects a korg/supernova output
+port and exits if there isn't one, so the MIDI path can't be developed or
+demoed on a bare laptop. `scripts/sn2_sim.py` plays the identical stream onto
+the virtual port with no hardware attached:
+
+```
+python3 scripts/sn2_sim.py --song-unit 30
+MIDI=1 ./ButterchurnVisualizer.app/Contents/MacOS/ButterchurnVisualizer
+```
+
+`--song-unit` compresses 17:17 so a whole arc — and a Performance change — is
+watchable in seconds instead of minutes. `--seed` makes the stream reproducible,
+`--duration` bounds a soak test.
+
+### Keeping the three copies in sync
+
+The sync contract is written down three times: the generator, `OSC_DEF` in
+`mixer_host.html` ("copied verbatim from the sn2 script"), and the CCs
+`MidiEngine.swift` reads off channel 0. Retune a sine in one and the visuals
+drift off the music with nothing to catch it. `--check` compares all three and
+exits non-zero on drift — standard library only, no MIDI, no hardware, so it
+runs anywhere:
+
+```
+python3 scripts/sn2_sim.py --check
+```
+
+`--dump` prints the reconstructed oscillator field as CSV to diff against what
+the visualizer is doing.
+
 ---
 
 ## Presets & curation
@@ -224,6 +256,8 @@ scripts/
 ├── build-app.sh · broadcast.sh · curate-and-bundle.sh
 ├── fresh-visuals.sh · restore-visuals.sh · three-pools.sh
 ├── sn2_chaos8_runs.py         — the SN2 MIDI generator (see sn2_note_generator.md)
+├── sn2_sim.py                 — the same stream without the synth; --check guards
+│                                the generator/mixer/engine sync contract
 └── BROADCAST.md · CURATE.md · sn2_note_generator.md
 ```
 
