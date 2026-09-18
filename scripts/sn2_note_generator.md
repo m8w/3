@@ -8,6 +8,31 @@
 
 A Python script that sends a constant stream of random MIDI notes to a synth over all 8 MIDI channels, plus occasional "run" melodies and mod wheel movement — a self-playing chaos generator.
 
+## Prime-tuplet variant — `sn2_prime_tuplets.py`
+
+For machine-only abstract timing, run `scripts/sn2_prime_tuplets.py` instead. It
+keeps the identical fan-out port (`sn2 chaos → visuals`), the ch-16 Performance
+sync anchor, and the slow sound-design modulators (so the visualizer syncs
+exactly the same), but replaces the note engine with **prime-number polyrhythm**:
+
+- **N notes per span, N prime** — 2,3,5,7,11,13,17,19,23,29,31,37 notes spread
+  evenly across a beat, half note, whole note, or 2–3 whole notes. So: 7 notes
+  per beat, 13 per beat, 17 per half note, 19 per whole note, 7 per two whole
+  notes, and so on — timings no human could play.
+- **Interwoven** — 2–5 of these streams run at once on different channels, each
+  with its own prime and span, layered into dense shifting polyrhythm.
+- **Nested** — any single slot of a tuplet can itself split into a prime
+  sub-tuplet (e.g. one of the seven divided into 1/7ths).
+- Everything is placed on an **absolute machine clock** (a heap-scheduled event
+  queue polled every ~2ms), so the tuplets land exactly where the math says.
+
+Run: `python3 scripts/sn2_prime_tuplets.py` (tempo `BPM=120 python3 …`, default 96).
+Stop with `q`+enter or Ctrl+C. The visualizer connects to it exactly as it does
+to the chaos generator below (`MIDI=1`).
+
+---
+
+
 ## What it does
 
 - Plays random notes on all 8 MIDI channels at random times, random pitches, random velocities, and random lengths — nonstop.
