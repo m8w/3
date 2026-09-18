@@ -2,3 +2,5 @@ node_modules/
 .build/
 *.o
 *.d
+__pycache__/
+*.pyc
