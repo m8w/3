@@ -29,7 +29,7 @@ import sys
 NUM_CHANNELS = 8                     # SN2 parts on channels 1-8
 KORG_CHANNEL = 8                     # 0-indexed -> MIDI channel 9 (the korg)
 KORG_PHASE = math.pi * 0.55
-KORG_PRESET_DWELL_SECONDS = 5 * 60 + 55
+KORG_PRESET_DWELL_SECONDS = 7 * 60 + 7   # korg swaps presets every 7:07
 
 # ── prime-tuplet grid ───────────────────────────────────────────────────────────
 import os
@@ -68,8 +68,8 @@ GLOBAL_MIDI_CHANNEL = 16
 PERF_BANK_LSB = {"A": 1, "B": 2, "C": 3, "D": 4}
 PERFORMANCE_BANK_LETTER = "C"
 PERFORMANCE_NUMBER_MIN, PERFORMANCE_NUMBER_MAX = 0, 99
-SONG_UNIT_SECONDS = 17 * 60 + 17
-PERFORMANCE_DWELL_SECONDS = SONG_UNIT_SECONDS
+SONG_UNIT_SECONDS = 17 * 60 + 17          # 17:17 — the slow sound-design arcs keep this cycle
+PERFORMANCE_DWELL_SECONDS = 11 * 60 + 11  # SN2 swaps Performances every 11:11 (independent of the arcs)
 
 # ── slow sound-design modulators ────────────────────────────────────────────────
 MODWHEEL_CC = 1

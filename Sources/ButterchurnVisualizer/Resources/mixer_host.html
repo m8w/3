@@ -512,14 +512,14 @@ window._updateMIDI = m => {
   const first = !midi; midi = m;
   M.on = !!m.connected;
   if (typeof m.hits === 'number') { if (m.hits > _midiHits) midiPulse = Math.min(1.5, midiPulse + 0.5); _midiHits = m.hits; }
-  // A ch-16 Program Change = a new Performance = a 17:17 downbeat. Count anchors
-  // so the reconstructed song clock stays locked to the pulse, drift-free.
+  // A ch-16 Program Change = a new Performance = a downbeat: turn the mix over.
+  // (The SN2 now changes Performances on its own cycle, independent of the 17:17
+  // sound arcs, so the song clock free-runs continuously instead of resetting to
+  // the anchor — no phase jump when a preset swaps.)
   if (typeof m.program === 'number' && m.program >= 0 && m.program !== lastProgram) {
     lastProgram = m.program; anchorIndex++; onSongDownbeat();
   }
-  if (typeof m.beat === 'number' && m.beat >= 0 && anchorIndex >= 0)
-    songTime = anchorIndex * SONG_UNIT + m.beat;
-  if (first && m.connected) log('MIDI connected — locking visuals to the SN2 17:17 arcs');
+  if (first && m.connected) log('MIDI connected — reacting to the SN2 stream');
 };
 
 // New Performance landed: turn the whole mix over in step + a structural change.
@@ -531,8 +531,9 @@ function onSongDownbeat(){
   // (C key / HUD) until you change it again.
   refreshHUD();
 }
-// Before any anchor arrives, free-run the clock so the oscillators still move.
-function tickSongClock(){ if (anchorIndex < 0) songTime = (performance.now() - _t0) / 1000; }
+// The song clock free-runs on wall time (continuous, no jumps). The reconstructed
+// oscillators keep the 17:17-multiple periods that match the synth's sound arcs.
+function tickSongClock(){ songTime = (performance.now() - _t0) / 1000; }
 // Slew the smoothed live arcs toward the latest MIDI CCs each frame.
 function updateMidiSmooth(){
   if (!midi || !midi.connected) return;
