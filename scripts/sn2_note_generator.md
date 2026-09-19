@@ -8,27 +8,34 @@
 
 A Python script that sends a constant stream of random MIDI notes to a synth over all 8 MIDI channels, plus occasional "run" melodies and mod wheel movement — a self-playing chaos generator.
 
-## Prime-tuplet variant — `sn2_prime_tuplets.py`
+## Prime-tuplet generators — `sn2_prime_tuplets.py` / `sn2_prime_phrases.py`
 
-For machine-only abstract timing, run `scripts/sn2_prime_tuplets.py` instead. It
-keeps the identical fan-out port (`sn2 chaos → visuals`), the ch-16 Performance
-sync anchor, and the slow sound-design modulators (so the visualizer syncs
-exactly the same), but replaces the note engine with **prime-number polyrhythm**:
+Two machine-only polyrhythm generators built on a shared engine
+(`scripts/sn2_engine.py`). Both drive **both synths at once** — the Supernova II's
+8 parts on channels 1–8 (the DIN port) and the microKORG XL's single part on
+channel 9 (its own `SOUND` port) — and mirror everything to the `sn2 chaos →
+visuals` port with the ch-16 sync anchor, so the visualizer locks to them exactly
+like the chaos generator below.
 
-- **N notes per span, N prime** — 2,3,5,7,11,13,17,19,23,29,31,37 notes spread
-  evenly across a beat, half note, whole note, or 2–3 whole notes. So: 7 notes
-  per beat, 13 per beat, 17 per half note, 19 per whole note, 7 per two whole
-  notes, and so on — timings no human could play.
-- **Interwoven** — 2–5 of these streams run at once on different channels, each
-  with its own prime and span, layered into dense shifting polyrhythm.
-- **Nested** — any single slot of a tuplet can itself split into a prime
-  sub-tuplet (e.g. one of the seven divided into 1/7ths).
-- Everything is placed on an **absolute machine clock** (a heap-scheduled event
-  queue polled every ~2ms), so the tuplets land exactly where the math says.
+- **N notes per span, N prime** — 2,3,5,7,11,13,17,19,23,29,31,37 evenly across a
+  beat / half / whole / 2–3 whole notes (7 per beat, 17 per half, 19 per whole,
+  7 per two whole, …). **Interwoven** across channels and **nested** (a slot
+  split into a prime sub-tuplet). Placed on an absolute heap-scheduled clock.
+- **Rate-governed** — this is the important part: MIDI DIN carries only ~1000
+  messages/sec, and unbounded prime tuplets used to flood it and **crash the
+  SN2**. The engine now caps onset rate per stream and across the whole SN2 bus
+  (high primes only on long spans), and routes channel 9 to the korg's own port
+  so it never adds to the SN2 bus. No more floods, no more restarts.
+- **Beat layer** — a steady pulse comes and goes in stretches, so it grooves
+  here and there instead of being purely abstract.
 
-Run: `python3 scripts/sn2_prime_tuplets.py` (tempo `BPM=120 python3 …`, default 96).
-Stop with `q`+enter or Ctrl+C. The visualizer connects to it exactly as it does
-to the chaos generator below (`MIDI=1`).
+`sn2_prime_tuplets.py` picks pitches near a wandering root.
+`sn2_prime_phrases.py` plays real melodic phrases from `found_floor_phrases.json`
+(non-repeating deck) at the same prime timings.
+
+Run: `python3 scripts/sn2_prime_tuplets.py` (or `sn2_prime_phrases.py`), tempo
+`BPM=120 python3 …` (default 96). Stop with `q`+enter or Ctrl+C. Both need
+`scripts/sn2_engine.py` alongside them.
 
 ---
 
