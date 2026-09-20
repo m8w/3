@@ -106,6 +106,7 @@ _sched = []
 _sched_lock = threading.Lock()
 _seq = 0
 channel_free_at = [0.0] * (NUM_CHANNELS + 1)   # +1 for the korg channel
+_note_counts = [0] * (NUM_CHANNELS + 1)        # note-ons per channel (for the activity meter)
 
 
 # ── ports ────────────────────────────────────────────────────────────────────────
@@ -205,7 +206,23 @@ def _emit_korg(msg):
 
 def emit_note(ch, on, note, vel):
     status = (0x90 if on else 0x80) | (ch & 0x0F)
+    if on and 0 <= ch < len(_note_counts):
+        _note_counts[ch] += 1
     (_emit_korg if ch == KORG_CHANNEL else _emit)([status, note, vel])
+
+
+def activity_loop():
+    """ACTIVITY=1 → print a per-part note meter every few seconds, so you can see
+    all 8 SN2 parts (and the korg) actually firing."""
+    while running:
+        time.sleep(6.0)
+        if not running:
+            break
+        counts = _note_counts[:]
+        for i in range(len(_note_counts)):
+            _note_counts[i] = 0
+        parts = " ".join(f"{counts[c]:>3}" for c in range(NUM_CHANNELS))
+        print(f"[notes/6s] SN2 parts 1-8: {parts}   korg: {counts[KORG_CHANNEL]}")
 
 
 def send_cc(ch, cc, val, korg=False):
@@ -475,6 +492,8 @@ def main(get_phrase=None, label="prime tuplets"):
         threading.Thread(target=sound_design_loop, args=[ch], daemon=True).start()
     threading.Thread(target=modwheel_loop, args=[KORG_CHANNEL, True], daemon=True).start()
     threading.Thread(target=sound_design_loop, args=[KORG_CHANNEL, True], daemon=True).start()
+    if os.environ.get("ACTIVITY") == "1":
+        threading.Thread(target=activity_loop, daemon=True).start()
     threading.Thread(target=input_loop, daemon=True).start()
 
     try:
