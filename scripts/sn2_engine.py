@@ -47,9 +47,9 @@ NEST_PRIMES = [2, 3, 5, 7]
 # MIDI DIN carries ~1040 three-byte messages/sec. Each note is 2 messages
 # (on+off). We cap note traffic far below that and leave headroom for the CC
 # sweeps and program changes, so the SN2 never buffer-overflows.
-PER_STREAM_MAX_RATE = 16.0   # onsets/sec a single tuplet stream may reach
-TOTAL_MAX_RATE      = 80.0   # onsets/sec across ALL eight SN2 channels
-KORG_MAX_RATE       = 14.0   # onsets/sec for the korg's single part
+PER_STREAM_MAX_RATE = 9.0    # onsets/sec per SN2 part (×8 parts stays under the DIN bus)
+TOTAL_MAX_RATE      = NUM_CHANNELS * PER_STREAM_MAX_RATE   # ~72/s worst case across all parts
+KORG_MAX_RATE       = 14.0   # onsets/sec for the korg's single part (its own port)
 MIN_NEST_STEP       = 0.22   # only a slot at least this long may nest
 NEST_PROB           = 0.15
 REROLL_PROB         = 0.4
@@ -117,14 +117,13 @@ def select_port():
     if not ports:
         print("No MIDI output ports found. Check Audio MIDI Setup.")
         sys.exit(1)
-    # The SN2 is reached over the DIN 'MIDI OUT' port (often named for the korg
-    # that passes MIDI through to it). Pick that — but NEVER the korg's own
-    # 'SOUND' engine port, which is a separate destination (channel 9).
+    # Same port match the working generators use — but never the korg's own
+    # 'SOUND' engine port (that's the separate channel-9 destination).
     for i, name in enumerate(ports):
         lname = name.lower()
         if "sound" in lname:
             continue
-        if any(k in lname for k in ["supernova", "midi out", "microkorg", "microkey", "korg", "din", "iac"]):
+        if any(k in lname for k in ["korg", "microkey", "microkorg", "supernova"]):
             print(f"SN2 (8 parts) on: [{i}] {name}")
             midi_out.open_port(i)
             return
@@ -386,25 +385,20 @@ def planner_loop(get_phrase):
             beat_on = not beat_on
             beat_left = random.randint(*(BEAT_ON_MEASURES if beat_on else BEAT_OFF_MEASURES))
 
-        free = [ch for ch in range(NUM_CHANNELS) if channel_free_at[ch] <= next_bar + 1e-6]
-        random.shuffle(free)
-        total_rate = 0.0
-
-        if beat_on and free:
-            pch = free.pop()
-            schedule_pulse(next_bar, pch, get_phrase)
-            channel_free_at[pch] = next_bar + MEASURE
-            total_rate += 8.0 / MEASURE
-
-        # interwoven prime-tuplet streams, up to the total-rate budget
-        for ch in free:
-            if total_rate >= TOTAL_MAX_RATE:
-                break
-            if random.random() < 0.5:      # not every free channel every bar → space
-                continue
-            rate, end_t = plan_stream(next_bar, ch, get_phrase, PER_STREAM_MAX_RATE)
-            channel_free_at[ch] = end_t
-            total_rate += rate
+        # EVERY one of the 8 SN2 parts gets a stream each measure (unless it's
+        # still sounding a long multi-measure tuplet). Per-part rate is capped so
+        # all eight together stay well under the DIN bus limit. This is what makes
+        # sure all 8 patches are actually played, not a random subset.
+        beat_ch = random.randrange(NUM_CHANNELS) if beat_on else -1
+        for ch in range(NUM_CHANNELS):
+            if channel_free_at[ch] > next_bar + 1e-6:
+                continue   # still playing a long tuplet started in an earlier bar
+            if ch == beat_ch:
+                schedule_pulse(next_bar, ch, get_phrase)
+                channel_free_at[ch] = next_bar + MEASURE
+            else:
+                _, end_t = plan_stream(next_bar, ch, get_phrase, PER_STREAM_MAX_RATE)
+                channel_free_at[ch] = end_t
 
         # the korg's single part (its own port, its own budget)
         if korg_out is not None and channel_free_at[KORG_CHANNEL] <= next_bar + 1e-6:
