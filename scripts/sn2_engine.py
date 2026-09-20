@@ -117,6 +117,12 @@ def select_port():
     if not ports:
         print("No MIDI output ports found. Check Audio MIDI Setup.")
         sys.exit(1)
+    # Override: SN2_PORT=<index> or SN2_PORT=<name substring> forces the choice.
+    forced = _match_port(ports, os.environ.get("SN2_PORT"))
+    if forced is not None:
+        print(f"SN2 (8 parts) on: [{forced}] {ports[forced]}")
+        midi_out.open_port(forced)
+        return
     # Same port match the working generators use — but never the korg's own
     # 'SOUND' engine port (that's the separate channel-9 destination).
     for i, name in enumerate(ports):
@@ -133,18 +139,40 @@ def select_port():
     midi_out.open_port(int(input("Select the SN2 port number: ").strip()))
 
 
+def _match_port(ports, spec):
+    """Resolve a port override: a numeric index, or a case-insensitive substring
+    of the port name. Returns the index, or None if unset/unmatched."""
+    if not spec:
+        return None
+    spec = spec.strip()
+    if spec.isdigit() and int(spec) < len(ports):
+        return int(spec)
+    for i, name in enumerate(ports):
+        if spec.lower() in name.lower():
+            return i
+    return None
+
+
 def select_korg_port():
     """The korg's OWN sound engine is a separate USB-MIDI port ('SOUND'),
-    distinct from the DIN thru used for the SN2."""
+    distinct from the DIN thru used for the SN2. Override with KORG_PORT=<index>
+    or KORG_PORT=<name substring>."""
     global korg_out
     cand = rtmidi.MidiOut()
-    for i, name in enumerate(cand.get_ports()):
+    ports = cand.get_ports()
+    forced = _match_port(ports, os.environ.get("KORG_PORT"))
+    if forced is not None:
+        print(f"Korg (ch {KORG_CHANNEL + 1}) on: [{forced}] {ports[forced]}")
+        cand.open_port(forced)
+        korg_out = cand
+        return
+    for i, name in enumerate(ports):
         if "korg" in name.lower() and "sound" in name.lower():
             print(f"Korg (ch {KORG_CHANNEL + 1}) on: [{i}] {name}")
             cand.open_port(i)
             korg_out = cand
             return
-    print("Could not find the korg's 'SOUND' port; channel-9 voice disabled.")
+    print("Could not find the korg's 'SOUND' port; channel-9 voice disabled (set KORG_PORT to pin it).")
     korg_out = None
 
 
