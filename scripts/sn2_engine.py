@@ -47,12 +47,12 @@ NEST_PRIMES = [2, 3, 5, 7]
 # MIDI DIN carries ~1040 three-byte messages/sec. Each note is 2 messages
 # (on+off). We cap note traffic far below that and leave headroom for the CC
 # sweeps and program changes, so the SN2 never buffer-overflows.
-PER_STREAM_MAX_RATE = 9.0    # onsets/sec per SN2 part (×8 parts stays under the DIN bus)
-TOTAL_MAX_RATE      = NUM_CHANNELS * PER_STREAM_MAX_RATE   # ~72/s worst case across all parts
-KORG_MAX_RATE       = 14.0   # onsets/sec for the korg's single part (its own port)
-MIN_NEST_STEP       = 0.22   # only a slot at least this long may nest
-NEST_PROB           = 0.15
-REROLL_PROB         = 0.4
+PER_STREAM_MAX_RATE = 24.0   # peak within a single burst (guards nested sub-tuplets)
+MAX_CONCURRENT      = 4       # parts playing a figure at once — space is what makes
+                             # a 7-in-a-beat or 13-in-a-beat run actually audible
+MEASURE_BUDGET      = 72      # max note onsets per measure across the SN2 (avg-rate safety)
+MIN_NEST_STEP       = 0.22    # only a slot at least this long may nest
+NEST_PROB           = 0.12
 
 NOTE_LOW, NOTE_HIGH = 24, 100
 VEL_MIN, VEL_MAX = 30, 118
@@ -107,6 +107,7 @@ _sched_lock = threading.Lock()
 _seq = 0
 channel_free_at = [0.0] * (NUM_CHANNELS + 1)   # +1 for the korg channel
 _note_counts = [0] * (NUM_CHANNELS + 1)        # note-ons per channel (for the activity meter)
+_rotate = 0                                    # rotating start channel so all 8 parts get turns
 
 
 # ── ports ────────────────────────────────────────────────────────────────────────
@@ -358,16 +359,6 @@ def slot_pitch(root, phrase, i):
     return root + random.choice([-12, -7, -5, -3, 0, 0, 2, 3, 5, 7, 12])
 
 
-def choose_span_count(max_rate):
-    """Pick a span, then a prime count whose onset rate stays under max_rate — so
-    high primes only appear on long spans and no stream ever floods the bus."""
-    span_name, span = random.choice(SPAN_LIST)
-    allowed = [p for p in PRIMES if p / span <= max_rate]
-    if not allowed:
-        allowed = [2, 3]
-    return span_name, span, random.choice(allowed)
-
-
 def plan_tuplet(t0, span, count, ch, root, phrase, depth):
     step = span / count
     for i in range(count):
@@ -382,24 +373,37 @@ def plan_tuplet(t0, span, count, ch, root, phrase, depth):
                           t, step * random.uniform(GATE_MIN, GATE_MAX))
 
 
-def plan_stream(bar_t, ch, get_phrase, max_rate):
-    """Tile a rate-limited prime tuplet across one measure on one channel.
-    Returns (approx onset rate, end_time)."""
-    span_name, span, count = choose_span_count(max_rate)
+# Spans a single figure can occupy, weighted toward beat/half so most figures are
+# FAST prime bursts (the "7 in a beat", "13 in a beat" you actually hear).
+FIGURE_SPANS = [("beat", BEAT), ("beat", BEAT), ("beat", BEAT),
+                ("half", HALF), ("half", HALF),
+                ("whole", WHOLE), ("2whole", 2 * WHOLE)]
+FIGURE_MAX_RATE = 24.0   # cap the peak of a single burst (still allows 13-in-a-beat)
+
+
+def plan_figure(bar_t, ch, get_phrase):
+    """One DISTINCT prime-tuplet figure — a burst of N (prime) notes evenly across
+    one span, placed at a beat offset in the measure, then the channel rests. This
+    is what makes the prime rhythm audible instead of a triplet cloud. Returns
+    (onset count, end_time)."""
+    span_name, span = random.choice(FIGURE_SPANS)
+    allowed = [p for p in PRIMES if p / span <= FIGURE_MAX_RATE]
+    if not allowed:
+        allowed = [2, 3, 5]
+    count = random.choice(allowed)
     root = random.randint(NOTE_LOW, NOTE_HIGH)
     phrase = get_phrase()
-    if span >= MEASURE:
-        plan_tuplet(bar_t, span, count, ch, root, phrase, depth=1)
-        return count / span, bar_t + span
-    t, end = bar_t, bar_t + MEASURE
-    while t < end - 1e-6:
-        plan_tuplet(t, span, count, ch, root, phrase, depth=1)
-        t += span
-        if random.random() < REROLL_PROB:
-            span_name, span, count = choose_span_count(max_rate)
-            root = random.randint(NOTE_LOW, NOTE_HIGH)
-            phrase = get_phrase()
-    return count / span, end
+    # Place the figure on one of the measure's beat slots that fits the span, so
+    # different parts' figures interleave instead of all starting on the downbeat.
+    if span < MEASURE:
+        slots = max(1, int(round(MEASURE / span)))
+        start = bar_t + random.randrange(slots) * span
+        if start + span > bar_t + MEASURE + 1e-6:
+            start = bar_t + MEASURE - span
+    else:
+        start = bar_t
+    plan_tuplet(start, span, count, ch, root, phrase, depth=1)
+    return count, start + span
 
 
 def schedule_pulse(bar_t, ch, get_phrase):
@@ -430,24 +434,35 @@ def planner_loop(get_phrase):
             beat_on = not beat_on
             beat_left = random.randint(*(BEAT_ON_MEASURES if beat_on else BEAT_OFF_MEASURES))
 
-        # EVERY one of the 8 SN2 parts gets a stream each measure (unless it's
-        # still sounding a long multi-measure tuplet). Per-part rate is capped so
-        # all eight together stay well under the DIN bus limit. This is what makes
-        # sure all 8 patches are actually played, not a random subset.
-        beat_ch = random.randrange(NUM_CHANNELS) if beat_on else -1
-        for ch in range(NUM_CHANNELS):
-            if channel_free_at[ch] > next_bar + 1e-6:
-                continue   # still playing a long tuplet started in an earlier bar
-            if ch == beat_ch:
-                schedule_pulse(next_bar, ch, get_phrase)
-                channel_free_at[ch] = next_bar + MEASURE
-            else:
-                _, end_t = plan_stream(next_bar, ch, get_phrase, PER_STREAM_MAX_RATE)
-                channel_free_at[ch] = end_t
+        # Only a FEW parts play a figure each measure, in a rotating order so all 8
+        # get used over time but each prime burst is heard with space around it (not
+        # a wall of overlapping notes). The measure onset budget keeps the average
+        # rate safe for the SN2 bus while still allowing fast bursts.
+        global _rotate
+        order = [(_rotate + k) % NUM_CHANNELS for k in range(NUM_CHANNELS)]
+        _rotate = (_rotate + 1) % NUM_CHANNELS
+        free = [ch for ch in order if channel_free_at[ch] <= next_bar + 1e-6]
+        active = 0
+        budget = MEASURE_BUDGET
 
-        # the korg's single part (its own port, its own budget)
+        if beat_on and free:
+            pch = free.pop(0)
+            schedule_pulse(next_bar, pch, get_phrase)
+            channel_free_at[pch] = next_bar + MEASURE
+            active += 1
+            budget -= 8
+
+        for ch in free:
+            if active >= MAX_CONCURRENT or budget <= 4:
+                break
+            onsets, end_t = plan_figure(next_bar, ch, get_phrase)
+            channel_free_at[ch] = end_t
+            active += 1
+            budget -= onsets
+
+        # the korg's single part (its own port), also one figure at a time
         if korg_out is not None and channel_free_at[KORG_CHANNEL] <= next_bar + 1e-6:
-            _, kend = plan_stream(next_bar, KORG_CHANNEL, get_phrase, KORG_MAX_RATE)
+            _, kend = plan_figure(next_bar, KORG_CHANNEL, get_phrase)
             channel_free_at[KORG_CHANNEL] = kend
 
         next_bar += MEASURE
@@ -476,8 +491,9 @@ def main(get_phrase=None, label="prime tuplets"):
     song_start = time.time()
 
     print(f"\n{label} at {BPM:.0f} BPM (beat {BEAT*1000:.0f}ms, whole {WHOLE*1000:.0f}ms).")
-    print(f"SN2 8 parts (ch 1-8) + korg (ch 9). Rate-governed: ≤{TOTAL_MAX_RATE:.0f} onsets/s on "
-          f"the SN2 bus so it can't be flooded. Beat layer grooves in stretches.")
+    print(f"SN2 8 parts (ch 1-8) + korg (ch 9). Distinct prime bursts (up to ~{MAX_CONCURRENT} at once, "
+          f"≈{MEASURE_BUDGET/MEASURE:.0f} onsets/s avg) so the primes are heard and the SN2 bus stays safe. "
+          f"Beat layer grooves in stretches.")
     print(f"Performances {PERFORMANCE_BANK_LETTER}{PERFORMANCE_NUMBER_MIN:03d}-"
           f"{PERFORMANCE_BANK_LETTER}{PERFORMANCE_NUMBER_MAX:03d}, "
           f"{PERFORMANCE_DWELL_SECONDS//60}:{PERFORMANCE_DWELL_SECONDS%60:02d} each (ch-16 sync anchor).")
